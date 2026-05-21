@@ -1,17 +1,12 @@
-//
-//  OshiRoomApp.swift
-//  OshiRoom
-//
-//  Created by 脇坂颯大 on 21/05/2026.
-//
-
+import SwiftData
 import SwiftUI
 
 @main
 struct OshiRoomApp: App {
-	var body: some Scene {
-		WindowGroup {
-			ContentView()
-		}
-	}
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+        .modelContainer(for: [Shelf.self, PlacedItem.self])
+    }
 }

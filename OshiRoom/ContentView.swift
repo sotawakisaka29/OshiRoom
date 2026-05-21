@@ -1,24 +1,14 @@
-//
-//  ContentView.swift
-//  OshiRoom
-//
-//  Created by 脇坂颯大 on 21/05/2026.
-//
-
+import SwiftData
 import SwiftUI
 
+/// アプリ全体の入口になる画面です。
 struct ContentView: View {
-	var body: some View {
-		VStack {
-			Image(systemName: "globe")
-				.imageScale(.large)
-				.foregroundStyle(.tint)
-			Text("Hello, world!")
-		}
-		.padding()
-	}
+    var body: some View {
+        HomeView()
+    }
 }
 
 #Preview {
-	ContentView()
+    ContentView()
+        .modelContainer(PreviewModelContainer.make())
 }
