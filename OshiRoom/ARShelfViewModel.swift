@@ -4,6 +4,12 @@ import SwiftData
 import UIKit
 import simd
 
+/// AR空間で現在選択されている対象です。
+enum ARShelfSelectionTarget: Equatable {
+    case shelf
+    case item(UUID)
+}
+
 /// AR配置画面の状態を管理し、SwiftDataへ保存するViewModelです。
 @Observable
 final class ARShelfViewModel {
@@ -14,7 +20,7 @@ final class ARShelfViewModel {
     var isProcessing = false
     var saveRequestToken = 0
     var deleteRequestToken = 0
-    var selectedItemID: UUID?
+    var selectedTarget: ARShelfSelectionTarget?
 
     init(shelf: Shelf) {
         self.shelf = shelf
@@ -34,17 +40,43 @@ final class ARShelfViewModel {
         shelf.updatedAt = .now
         modelContext.insert(item)
         pendingGoods = PendingGoods(item: item, image: image)
+        mode = .goodsEdit
+        selectedTarget = ARShelfSelectionTarget.item(item.id)
         statusMessage = "グッズを棚へ配置しました。編集モードで位置を調整できます。"
     }
 
     func selectItem(id: UUID?) {
-        selectedItemID = id
+        selectedTarget = id.map { ARShelfSelectionTarget.item($0) }
 
         if id == nil {
-            statusMessage = "削除したいグッズをタップして選択してください。"
+            statusMessage = mode.selectionPrompt
         } else {
-            statusMessage = "グッズを選択しました。削除ボタンで棚から外せます。"
+            statusMessage = "グッズを選択しました。選択中のグッズだけ移動、回転、拡大縮小できます。"
         }
+    }
+
+    func selectShelf() {
+        selectedTarget = ARShelfSelectionTarget.shelf
+        statusMessage = "棚を選択しました。選択中の棚だけ移動、回転、拡大縮小できます。"
+    }
+
+    func switchMode(_ newMode: ARInteractionMode) {
+        mode = newMode
+
+        switch newMode {
+        case .placement:
+            selectedTarget = nil
+        case .shelfEdit:
+            if selectedTarget != ARShelfSelectionTarget.shelf {
+                selectedTarget = nil
+            }
+        case .goodsEdit:
+            if selectedItemID == nil {
+                selectedTarget = nil
+            }
+        }
+
+        statusMessage = newMode.selectionPrompt
     }
 
     func requestDeleteSelected() {
@@ -65,7 +97,7 @@ final class ARShelfViewModel {
 
         shelf.items.removeAll { $0.id == selectedItemID }
         modelContext.delete(item)
-        self.selectedItemID = nil
+        selectedTarget = nil
         shelf.updatedAt = .now
 
         do {
@@ -114,12 +146,21 @@ final class ARShelfViewModel {
 
         return index
     }
+
+    var selectedItemID: UUID? {
+        guard case let .item(id) = selectedTarget else {
+            return nil
+        }
+
+        return id
+    }
 }
 
 /// AR内の操作モードです。
 enum ARInteractionMode: String, CaseIterable, Identifiable {
     case placement
-    case edit
+    case shelfEdit
+    case goodsEdit
 
     var id: String { rawValue }
 
@@ -127,8 +168,21 @@ enum ARInteractionMode: String, CaseIterable, Identifiable {
         switch self {
         case .placement:
             "配置"
-        case .edit:
-            "編集"
+        case .shelfEdit:
+            "棚編集"
+        case .goodsEdit:
+            "グッズ編集"
+        }
+    }
+
+    var selectionPrompt: String {
+        switch self {
+        case .placement:
+            "床を映して、置きたい場所をタップしてください。"
+        case .shelfEdit:
+            "棚編集モードです。棚のみ選択できます。"
+        case .goodsEdit:
+            "グッズ編集モードです。グッズのみ選択できます。"
         }
     }
 }

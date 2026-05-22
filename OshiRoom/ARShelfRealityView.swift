@@ -42,6 +42,11 @@ struct ARShelfRealityView: UIViewRepresentable {
         private var anchorEntity: AnchorEntity?
         private var shelfEntity: ModelEntity?
         private var itemEntities: [UUID: ModelEntity] = [:]
+        private var itemCollisionSizes: [UUID: SIMD3<Float>] = [:]
+        private var shelfGestureRecognizers: [EntityGestureRecognizer] = []
+        private var itemGestureRecognizers: [UUID: [EntityGestureRecognizer]] = [:]
+        private var selectionOutline: Entity?
+        private var outlinedTarget: ARShelfSelectionTarget?
         private var handledPendingGoodsID: UUID?
         private var handledSaveRequestToken = 0
         private var handledDeleteRequestToken = 0
@@ -74,10 +79,9 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         func updateMode(_ mode: ARInteractionMode) {
-            shelfEntity?.isEnabled = true
-            for entity in itemEntities.values {
-                entity.isEnabled = true
-            }
+            updateCollisionAvailability()
+            updateGestureAvailability()
+            updateSelectionOutline()
         }
 
         func restoreShelfIfNeeded(in arView: ARView) {
@@ -119,8 +123,13 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             itemEntities[selectedItemID]?.removeFromParent()
             itemEntities[selectedItemID] = nil
+            itemCollisionSizes[selectedItemID] = nil
+            itemGestureRecognizers[selectedItemID]?.forEach { $0.isEnabled = false }
+            itemGestureRecognizers[selectedItemID] = nil
+            clearSelectionOutline()
             syncTransformsToModel()
             _ = viewModel.deleteSelected(modelContext: modelContext)
+            updateGestureAvailability()
         }
 
         func consumePendingGoodsIfNeeded() {
@@ -140,6 +149,8 @@ struct ARShelfRealityView: UIViewRepresentable {
             handledPendingGoodsID = pendingGoods.item.id
             addItemEntity(for: pendingGoods.item, image: pendingGoods.image, installGestures: true)
             viewModel.pendingGoods = nil
+            updateGestureAvailability()
+            updateSelectionOutline()
         }
 
         @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
@@ -154,7 +165,7 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
 
             if shelfEntity != nil {
-                selectItem(at: point, in: arView)
+                selectObject(at: point, in: arView)
                 return
             }
 
@@ -169,18 +180,39 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             placeShelf(with: result.worldTransform, in: arView)
             viewModel.shelf.anchorTransformData = MatrixCoder.encode(result.worldTransform)
-            viewModel.statusMessage = "棚を配置しました。棚をドラッグ、ピンチ、回転して位置を調整できます。"
+            viewModel.switchMode(.shelfEdit)
+            viewModel.selectShelf()
+            updateCollisionAvailability()
+            updateGestureAvailability()
+            updateSelectionOutline()
         }
 
-        private func selectItem(at point: CGPoint, in arView: ARView) {
-            guard let entity = arView.entity(at: point),
-                  let itemID = UUID(uuidString: entity.name),
-                  itemEntities[itemID] != nil else {
-                viewModel.selectItem(id: nil)
+        private func selectObject(at point: CGPoint, in arView: ARView) {
+            let hitEntity = arView.entity(at: point)
+
+            if viewModel.mode == .goodsEdit, let itemID = itemID(for: hitEntity) {
+                viewModel.selectItem(id: itemID)
+                updateGestureAvailability()
+                updateSelectionOutline()
                 return
             }
 
-            viewModel.selectItem(id: itemID)
+            if viewModel.mode == .shelfEdit, isShelfHit(hitEntity) {
+                viewModel.selectShelf()
+                updateGestureAvailability()
+                updateSelectionOutline()
+                return
+            }
+
+            guard isInterfaceHidden == false else {
+                return
+            }
+
+            if viewModel.selectedTarget != nil {
+                viewModel.selectItem(id: nil)
+                updateGestureAvailability()
+                updateSelectionOutline()
+            }
         }
 
         private func placeShelf(with transform: simd_float4x4, in arView: ARView) {
@@ -190,7 +222,8 @@ struct ARShelfRealityView: UIViewRepresentable {
             arView.scene.addAnchor(anchor)
             anchorEntity = anchor
             shelfEntity = shelf
-            arView.installGestures([.translation, .rotation, .scale], for: shelf)
+            shelfGestureRecognizers = arView.installGestures([.translation, .rotation, .scale], for: shelf)
+            updateGestureAvailability()
         }
 
         private func restoreSavedItems() {
@@ -209,18 +242,140 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
 
             let entity = GoodsEntityFactory.makeGoodsEntity(image: image)
+            let collisionSize = GoodsEntityFactory.size(for: image)
             let snapshot = item.transformSnapshot
             entity.position = snapshot.position
             entity.orientation = snapshot.quaternion
             entity.scale = snapshot.scale
             entity.name = item.id.uuidString
-            entity.components.set(CollisionComponent(shapes: [.generateBox(size: [0.12, 0.18, 0.012])]))
             shelfEntity.addChild(entity)
             itemEntities[item.id] = entity
+            itemCollisionSizes[item.id] = collisionSize
 
             if installGestures, let arView {
-                arView.installGestures([.translation, .rotation, .scale], for: entity)
+                itemGestureRecognizers[item.id] = arView.installGestures([.translation, .rotation, .scale], for: entity)
+                updateCollisionAvailability()
+                updateGestureAvailability()
             }
+        }
+
+        private func itemID(for entity: Entity?) -> UUID? {
+            var currentEntity = entity
+
+            while let entity = currentEntity {
+                if let itemID = UUID(uuidString: entity.name), itemEntities[itemID] != nil {
+                    return itemID
+                }
+
+                currentEntity = entity.parent
+            }
+
+            return nil
+        }
+
+        private func isShelfHit(_ entity: Entity?) -> Bool {
+            guard let shelfEntity else {
+                return false
+            }
+
+            var currentEntity = entity
+
+            while let entity = currentEntity {
+                if entity === shelfEntity {
+                    return true
+                }
+
+                currentEntity = entity.parent
+            }
+
+            return false
+        }
+
+        private func updateGestureAvailability() {
+            let isShelfSelected = viewModel.mode == .shelfEdit
+                && viewModel.selectedTarget == ARShelfSelectionTarget.shelf
+
+            shelfGestureRecognizers.forEach { recognizer in
+                recognizer.isEnabled = isShelfSelected
+            }
+
+            for (itemID, recognizers) in itemGestureRecognizers {
+                let isSelectedItem = viewModel.mode == .goodsEdit
+                    && viewModel.selectedTarget == ARShelfSelectionTarget.item(itemID)
+                recognizers.forEach { recognizer in
+                    recognizer.isEnabled = isSelectedItem
+                }
+            }
+        }
+
+        private func updateCollisionAvailability() {
+            let isShelfCollisionEnabled = viewModel.mode == .shelfEdit
+            let areItemCollisionsEnabled = viewModel.mode == .goodsEdit
+
+            setShelfCollisionEnabled(isShelfCollisionEnabled)
+
+            for (itemID, entity) in itemEntities {
+                let size = itemCollisionSizes[itemID] ?? GoodsEntityFactory.defaultSize
+                setCollision(on: entity, isEnabled: areItemCollisionsEnabled, size: size)
+            }
+        }
+
+        private func setShelfCollisionEnabled(_ isEnabled: Bool) {
+            guard let shelfEntity else {
+                return
+            }
+
+            setCollision(on: shelfEntity, isEnabled: isEnabled, size: ShelfEntityFactory.collisionSize)
+        }
+
+        private func setCollision(on entity: ModelEntity, isEnabled: Bool, size: SIMD3<Float>) {
+            let shapes: [ShapeResource] = isEnabled ? [.generateBox(size: size)] : []
+            entity.components.set(CollisionComponent(shapes: shapes))
+        }
+
+        private func updateSelectionOutline() {
+            guard outlinedTarget != viewModel.selectedTarget else {
+                return
+            }
+
+            clearSelectionOutline()
+
+            switch viewModel.selectedTarget {
+            case .some(ARShelfSelectionTarget.shelf):
+                guard let shelfEntity else {
+                    return
+                }
+
+                let outline = SelectionOutlineFactory.makeOutline(
+                    size: SIMD3<Float>(0.84, 0.30, 0.22),
+                    center: SIMD3<Float>(0, 0.08, 0),
+                    color: UIColor.systemBlue
+                )
+                shelfEntity.addChild(outline)
+                selectionOutline = outline
+                outlinedTarget = ARShelfSelectionTarget.shelf
+            case let .some(ARShelfSelectionTarget.item(itemID)):
+                guard let itemEntity = itemEntities[itemID],
+                      let item = viewModel.shelf.items.first(where: { $0.id == itemID }) else {
+                    return
+                }
+
+                let outline = SelectionOutlineFactory.makeOutline(
+                    size: GoodsEntityFactory.size(forImageAt: item.imagePath),
+                    color: UIColor.systemBlue
+                )
+                itemEntity.addChild(outline)
+                selectionOutline = outline
+                outlinedTarget = ARShelfSelectionTarget.item(itemID)
+            case nil:
+                break
+            }
+        }
+
+        private func clearSelectionOutline() {
+            selectionOutline?.removeFromParent()
+            selectionOutline = nil
+            outlinedTarget = nil
         }
 
         func syncTransformsToModel() {
@@ -250,9 +405,11 @@ struct ARShelfRealityView: UIViewRepresentable {
 
 /// テンプレートごとの仮棚Entityを作ります。
 enum ShelfEntityFactory {
+    static let collisionSize = SIMD3<Float>(0.82, 0.28, 0.2)
+
     static func makeShelf(template: ShelfTemplate) -> ModelEntity {
         let root = ModelEntity()
-        root.components.set(CollisionComponent(shapes: [.generateBox(size: [0.82, 0.28, 0.2])]))
+        root.components.set(CollisionComponent(shapes: [.generateBox(size: collisionSize)]))
 
         switch template {
         case .wood:
@@ -296,15 +453,34 @@ enum ShelfEntityFactory {
 /// 背景除去済み画像を薄い板状のグッズEntityへ変換します。
 enum GoodsEntityFactory {
     static func makeGoodsEntity(image: UIImage) -> ModelEntity {
+        let size = size(for: image)
+        let mesh = MeshResource.generateBox(width: size.x, height: size.y, depth: size.z)
+
+        let material = textureMaterial(from: image)
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+        entity.components.set(CollisionComponent(shapes: [.generateBox(size: size)]))
+        return entity
+    }
+
+    static func size(forImageAt path: String) -> SIMD3<Float> {
+        guard let image = ImageStore.load(path: path) else {
+            return defaultSize
+        }
+
+        return size(for: image)
+    }
+
+    static var defaultSize: SIMD3<Float> {
+        SIMD3<Float>(0.10, 0.10, 0.015)
+    }
+
+    static func size(for image: UIImage) -> SIMD3<Float> {
         let normalizedImage = image.normalizedForRendering()
         let height: Float = 0.10
         let aspectRatio = Float(normalizedImage.size.width / max(normalizedImage.size.height, 1))
         let width = max(height * aspectRatio, 0.06)
         let depth: Float = 0.015
-        let mesh = MeshResource.generateBox(width: width, height: height, depth: depth)
-
-        let material = textureMaterial(from: normalizedImage)
-        return ModelEntity(mesh: mesh, materials: [material])
+        return SIMD3<Float>(width, height, depth)
     }
 
     private static func textureMaterial(from image: UIImage) -> RealityKit.Material {
@@ -320,19 +496,72 @@ enum GoodsEntityFactory {
     }
 }
 
-#Preview {
-    if let container = try? ModelContainer(
-        for: Shelf.self,
-        PlacedItem.self,
-        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
-    ) {
-        ARShelfRealityView(
-            viewModel: ARShelfViewModel(shelf: Shelf(name: "Preview", template: .wood)),
-            modelContext: container.mainContext,
-            isInterfaceHidden: false,
-            onRequestShowInterface: {}
+/// 選択中Entityに取り付ける、細いBoxを組み合わせた選択枠です。
+enum SelectionOutlineFactory {
+    static func makeOutline(
+        size: SIMD3<Float>,
+        center: SIMD3<Float> = .zero,
+        color: UIColor,
+        lineWidth: Float = 0.004
+    ) -> Entity {
+        let root = Entity()
+        root.position = center
+
+        let safeSize = SIMD3<Float>(
+            max(size.x, lineWidth),
+            max(size.y, lineWidth),
+            max(size.z, lineWidth)
         )
-    } else {
-        Text("Preview unavailable")
+        let halfSize = safeSize / 2
+        let material = UnlitMaterial(color: color.withAlphaComponent(0.95))
+        let xPositions: [Float] = [-halfSize.x, halfSize.x]
+        let yPositions: [Float] = [-halfSize.y, halfSize.y]
+        let zPositions: [Float] = [-halfSize.z, halfSize.z]
+
+        for y in yPositions {
+            for z in zPositions {
+                addLine(
+                    to: root,
+                    position: SIMD3<Float>(0, y, z),
+                    size: SIMD3<Float>(safeSize.x, lineWidth, lineWidth),
+                    material: material
+                )
+            }
+        }
+
+        for x in xPositions {
+            for z in zPositions {
+                addLine(
+                    to: root,
+                    position: SIMD3<Float>(x, 0, z),
+                    size: SIMD3<Float>(lineWidth, safeSize.y, lineWidth),
+                    material: material
+                )
+            }
+        }
+
+        for x in xPositions {
+            for y in yPositions {
+                addLine(
+                    to: root,
+                    position: SIMD3<Float>(x, y, 0),
+                    size: SIMD3<Float>(lineWidth, lineWidth, safeSize.z),
+                    material: material
+                )
+            }
+        }
+
+        return root
+    }
+
+    private static func addLine(
+        to root: Entity,
+        position: SIMD3<Float>,
+        size: SIMD3<Float>,
+        material: RealityKit.Material
+    ) {
+        let line = ModelEntity(mesh: .generateBox(size: size), materials: [material])
+        line.position = position
+        root.addChild(line)
     }
 }

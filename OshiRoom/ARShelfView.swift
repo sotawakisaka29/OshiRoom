@@ -53,48 +53,60 @@ struct ARShelfView: View {
         VStack(spacing: 12) {
             StatusCapsule(message: viewModel.statusMessage)
 
-            HStack(spacing: 10) {
-                Button {
-                    isShowingAddGoods = true
-                } label: {
-                    BottomMenuItem(title: "グッズ追加", symbolName: "photo.badge.plus")
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    Button {
+                        viewModel.switchMode(.shelfEdit)
+                    } label: {
+                        BottomMenuItem(
+                            title: "棚編集",
+                            symbolName: "shippingbox",
+                            isActive: viewModel.mode == .shelfEdit
+                        )
+                    }
+
+                    Button {
+                        viewModel.switchMode(.goodsEdit)
+                    } label: {
+                        BottomMenuItem(
+                            title: "グッズ編集",
+                            symbolName: "photo",
+                            isActive: viewModel.mode == .goodsEdit
+                        )
+                    }
                 }
 
-                Button {
-                    viewModel.mode = viewModel.mode == .edit ? .placement : .edit
-                    viewModel.statusMessage = viewModel.mode == .edit
-                        ? "編集モードです。棚やグッズをドラッグ、ピンチ、回転できます。"
-                        : "配置モードです。棚は配置後もそのまま調整できます。"
-                } label: {
-                    BottomMenuItem(
-                        title: viewModel.mode == .edit ? "配置へ" : "編集",
-                        symbolName: "hand.draw"
-                    )
-                }
+                HStack(spacing: 10) {
+                    Button {
+                        isShowingAddGoods = true
+                    } label: {
+                        BottomMenuItem(title: "グッズ追加", symbolName: "photo.badge.plus")
+                    }
 
-                Button {
-                    viewModel.requestSave()
-                } label: {
-                    BottomMenuItem(title: "保存", symbolName: "square.and.arrow.down")
-                }
+                    Button {
+                        viewModel.requestSave()
+                    } label: {
+                        BottomMenuItem(title: "保存", symbolName: "square.and.arrow.down")
+                    }
 
-                Button {
-                    viewModel.requestDeleteSelected()
-                } label: {
-                    BottomMenuItem(
-                        title: "削除",
-                        symbolName: "trash",
-                        foregroundColor: viewModel.selectedItemID == nil ? AppColors.textMuted : Color(red: 0.74, green: 0.04, blue: 0.10)
-                    )
-                }
-                .disabled(viewModel.selectedItemID == nil)
-                .opacity(viewModel.selectedItemID == nil ? 0.55 : 1)
+                    Button {
+                        viewModel.requestDeleteSelected()
+                    } label: {
+                        BottomMenuItem(
+                            title: "削除",
+                            symbolName: "trash",
+                            foregroundColor: viewModel.selectedItemID == nil ? AppColors.textMuted : Color(red: 0.74, green: 0.04, blue: 0.10)
+                        )
+                    }
+                    .disabled(viewModel.selectedItemID == nil)
+                    .opacity(viewModel.selectedItemID == nil ? 0.55 : 1)
 
-                Button {
-                    isInterfaceHidden = true
-                    viewModel.statusMessage = "UIを非表示にしました。オブジェクト以外をタップすると再表示できます。"
-                } label: {
-                    BottomMenuItem(title: "非表示", symbolName: "eye.slash")
+                    Button {
+                        isInterfaceHidden = true
+                        viewModel.statusMessage = "UIを非表示にしました。オブジェクト以外をタップすると再表示できます。"
+                    } label: {
+                        BottomMenuItem(title: "非表示", symbolName: "eye.slash")
+                    }
                 }
             }
             .padding(10)
@@ -138,6 +150,7 @@ struct BottomMenuItem: View {
     let title: String
     let symbolName: String
     var foregroundColor: Color = AppColors.textPrimary
+    var isActive = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -146,10 +159,10 @@ struct BottomMenuItem: View {
             Text(title)
                 .font(.caption.weight(.semibold))
         }
-        .foregroundStyle(foregroundColor)
+        .foregroundStyle(isActive ? .white : foregroundColor)
         .frame(maxWidth: .infinity)
         .frame(height: 64)
-        .background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(isActive ? AppColors.textPrimary : AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(AppColors.separator, lineWidth: 1)
