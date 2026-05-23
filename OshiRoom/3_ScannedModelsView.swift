@@ -100,6 +100,8 @@ struct ScannedModelRow: View {
             .blue
         case .photogrammetry:
             .orange
+        case .objectCapture:
+            .indigo
         case .trueDepth:
             .green
         }

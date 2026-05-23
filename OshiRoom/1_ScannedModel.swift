@@ -50,6 +50,7 @@ final class ScannedModel {
 enum ScanMethod: String, CaseIterable, Identifiable {
     case lidar
     case photogrammetry
+    case objectCapture
     case trueDepth
 
     var id: String { rawValue }
@@ -60,6 +61,8 @@ enum ScanMethod: String, CaseIterable, Identifiable {
             "LiDARスキャン"
         case .photogrammetry:
             "フォトグラメトリ"
+        case .objectCapture:
+            "ObjectCapture"
         case .trueDepth:
             "TrueDepth補助"
         }
@@ -71,6 +74,8 @@ enum ScanMethod: String, CaseIterable, Identifiable {
             "LiDAR"
         case .photogrammetry:
             "Photo"
+        case .objectCapture:
+            "Object"
         case .trueDepth:
             "Depth"
         }
@@ -82,6 +87,8 @@ enum ScanMethod: String, CaseIterable, Identifiable {
             "viewfinder"
         case .photogrammetry:
             "camera.aperture"
+        case .objectCapture:
+            "cube.viewfinder"
         case .trueDepth:
             "faceid"
         }

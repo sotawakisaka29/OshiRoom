@@ -570,12 +570,22 @@ enum ShelfEntityFactory {
 enum GoodsEntityFactory {
     static func makeGoodsEntity(image: UIImage) -> ModelEntity {
         let size = size(for: image)
-        let mesh = MeshResource.generateBox(width: size.x, height: size.y, depth: size.z)
+        let root = ModelEntity()
+        let planeMesh = MeshResource.generatePlane(width: size.x, height: size.y)
+        let frontMaterial = textureMaterial(from: image, faceCulling: .back)
+        let backMaterial = textureMaterial(
+            from: image.horizontallyMirroredForRendering(),
+            faceCulling: .front
+        )
+        let frontEntity = ModelEntity(mesh: planeMesh, materials: [frontMaterial])
+        let backEntity = ModelEntity(mesh: planeMesh, materials: [backMaterial])
 
-        let material = textureMaterial(from: image)
-        let entity = ModelEntity(mesh: mesh, materials: [material])
-        entity.components.set(CollisionComponent(shapes: [.generateBox(size: size)]))
-        return entity
+        frontEntity.position.z = size.z / 2
+        backEntity.position.z = -size.z / 2
+        root.addChild(frontEntity)
+        root.addChild(backEntity)
+        root.components.set(CollisionComponent(shapes: [.generateBox(size: size)]))
+        return root
     }
 
     static func size(forImageAt path: String) -> SIMD3<Float> {
@@ -599,7 +609,10 @@ enum GoodsEntityFactory {
         return SIMD3<Float>(width, height, depth)
     }
 
-    private static func textureMaterial(from image: UIImage) -> RealityKit.Material {
+    private static func textureMaterial(
+        from image: UIImage,
+        faceCulling: UnlitMaterial.FaceCulling = .none
+    ) -> RealityKit.Material {
         let normalizedImage = image.normalizedForRendering()
         guard let cgImage = normalizedImage.cgImage,
               let texture = try? TextureResource(image: cgImage, options: .init(semantic: .color)) else {
@@ -608,6 +621,9 @@ enum GoodsEntityFactory {
 
         var material = UnlitMaterial()
         material.color = .init(texture: .init(texture))
+        material.blending = .transparent(opacity: 1.0)
+        material.opacityThreshold = 0.01
+        material.faceCulling = faceCulling
         return material
     }
 }

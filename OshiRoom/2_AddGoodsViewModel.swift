@@ -45,11 +45,22 @@ final class AddGoodsViewModel {
 
     private func process(_ image: UIImage) async -> (UIImage, String)? {
         do {
-            message = "背景を除去しています。"
-            let processedImage = await backgroundRemovalService.removeBackground(from: image)
+            let normalizedImage = image.normalizedForRendering()
+            let processedImage: UIImage
+
+            if normalizedImage.containsTransparentPixels() {
+                message = "透過PNGを整えています。"
+                processedImage = normalizedImage.croppedToVisibleAlphaBounds()
+            } else {
+                message = "背景を除去しています。"
+                processedImage = await backgroundRemovalService
+                    .removeBackground(from: normalizedImage)
+                    .croppedToVisibleAlphaBounds()
+            }
+
             let imagePath = try ImageStore.save(processedImage)
             previewImage = processedImage
-            message = "背景除去が完了しました。"
+            message = "グッズ画像の作成が完了しました。"
             return (processedImage, imagePath)
         } catch {
             message = "画像の作成に失敗しました。もう一度試してください。"

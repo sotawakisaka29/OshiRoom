@@ -58,6 +58,8 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
             [0.55, 0.55, 0.55]
         case .photogrammetry:
             [0.35, 0.35, 0.35]
+        case .objectCapture:
+            [0.35, 0.35, 0.35]
         case .trueDepth:
             [1.2, 1.2, 1.2]
         }
@@ -160,6 +162,8 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
             color = UIColor(red: 0.20, green: 0.48, blue: 0.92, alpha: 1)
         case .photogrammetry:
             color = UIColor(red: 0.92, green: 0.48, blue: 0.20, alpha: 1)
+        case .objectCapture:
+            color = UIColor(red: 0.34, green: 0.28, blue: 0.86, alpha: 1)
         case .trueDepth:
             color = UIColor(red: 0.10, green: 0.56, blue: 0.42, alpha: 1)
         }
