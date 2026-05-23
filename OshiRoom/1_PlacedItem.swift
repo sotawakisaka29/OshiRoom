@@ -7,6 +7,9 @@ import simd
 final class PlacedItem {
     @Attribute(.unique) var id: UUID
     var imagePath: String
+    var modelPath: String?
+    var contentTypeRawValue: String = PlacedItemContentType.image.rawValue
+    var displayName: String?
     var positionX: Float
     var positionY: Float
     var positionZ: Float
@@ -24,6 +27,9 @@ final class PlacedItem {
     init(
         id: UUID = UUID(),
         imagePath: String,
+        modelPath: String? = nil,
+        contentType: PlacedItemContentType = .image,
+        displayName: String? = nil,
         transform: TransformSnapshot = .identity,
         slotIndex: Int,
         createdAt: Date = .now,
@@ -31,6 +37,9 @@ final class PlacedItem {
     ) {
         self.id = id
         self.imagePath = imagePath
+        self.modelPath = modelPath
+        self.contentTypeRawValue = contentType.rawValue
+        self.displayName = displayName
         self.positionX = transform.position.x
         self.positionY = transform.position.y
         self.positionZ = transform.position.z
@@ -44,6 +53,11 @@ final class PlacedItem {
         self.slotIndex = slotIndex
         self.createdAt = createdAt
         self.shelf = shelf
+    }
+
+    var contentType: PlacedItemContentType {
+        get { PlacedItemContentType(rawValue: contentTypeRawValue) ?? .image }
+        set { contentTypeRawValue = newValue.rawValue }
     }
 
     var transformSnapshot: TransformSnapshot {
@@ -67,4 +81,9 @@ final class PlacedItem {
             scaleZ = newValue.scale.z
         }
     }
+}
+
+enum PlacedItemContentType: String {
+    case image
+    case model3D
 }

@@ -45,6 +45,9 @@ struct ARShelfView: View {
             AddGoodsView { image, imagePath in
                 viewModel.queueGoods(image: image, imagePath: imagePath, modelContext: modelContext)
                 isShowingAddGoods = false
+            } onModelSelected: { model in
+                viewModel.queueModel(model, modelContext: modelContext)
+                isShowingAddGoods = false
             }
         }
     }
@@ -72,6 +75,16 @@ struct ARShelfView: View {
                             title: "グッズ編集",
                             symbolName: "photo",
                             isActive: viewModel.mode == .goodsEdit
+                        )
+                    }
+
+                    Button {
+                        viewModel.toggleHeightAdjustment()
+                    } label: {
+                        BottomMenuItem(
+                            title: "高さ調整",
+                            symbolName: "arrow.up.and.down",
+                            isActive: viewModel.isHeightAdjustmentActive
                         )
                     }
                 }

@@ -43,8 +43,11 @@ struct ARShelfRealityView: UIViewRepresentable {
         private var shelfEntity: ModelEntity?
         private var itemEntities: [UUID: ModelEntity] = [:]
         private var itemCollisionSizes: [UUID: SIMD3<Float>] = [:]
+        private var itemCollisionCenters: [UUID: SIMD3<Float>] = [:]
         private var shelfGestureRecognizers: [EntityGestureRecognizer] = []
         private var itemGestureRecognizers: [UUID: [EntityGestureRecognizer]] = [:]
+        private var heightPanGesture: UIPanGestureRecognizer?
+        private var heightPanStartY: Float = 0
         private var selectionOutline: Entity?
         private var outlinedTarget: ARShelfSelectionTarget?
         private var handledPendingGoodsID: UUID?
@@ -75,6 +78,12 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
             arView.addGestureRecognizer(tapGesture)
+
+            let heightPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleHeightPan(_:)))
+            heightPanGesture.maximumNumberOfTouches = 1
+            heightPanGesture.isEnabled = false
+            arView.addGestureRecognizer(heightPanGesture)
+            self.heightPanGesture = heightPanGesture
             return arView
         }
 
@@ -124,6 +133,7 @@ struct ARShelfRealityView: UIViewRepresentable {
             itemEntities[selectedItemID]?.removeFromParent()
             itemEntities[selectedItemID] = nil
             itemCollisionSizes[selectedItemID] = nil
+            itemCollisionCenters[selectedItemID] = nil
             itemGestureRecognizers[selectedItemID]?.forEach { $0.isEnabled = false }
             itemGestureRecognizers[selectedItemID] = nil
             clearSelectionOutline()
@@ -147,7 +157,12 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
 
             handledPendingGoodsID = pendingGoods.item.id
-            addItemEntity(for: pendingGoods.item, image: pendingGoods.image, installGestures: true)
+            switch pendingGoods.content {
+            case .image(let image):
+                addImageItemEntity(for: pendingGoods.item, image: image, installGestures: true)
+            case .model3D(let modelPath):
+                addModelItemEntity(for: pendingGoods.item, modelPath: modelPath, installGestures: true)
+            }
             viewModel.pendingGoods = nil
             updateGestureAvailability()
             updateSelectionOutline()
@@ -185,6 +200,49 @@ struct ARShelfRealityView: UIViewRepresentable {
             updateCollisionAvailability()
             updateGestureAvailability()
             updateSelectionOutline()
+        }
+
+        @objc private func handleHeightPan(_ gesture: UIPanGestureRecognizer) {
+            guard let targetEntity = heightAdjustmentTargetEntity() else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                heightPanStartY = targetEntity.position.y
+            case .changed:
+                let translation = gesture.translation(in: gesture.view)
+                let nextY = heightPanStartY - Float(translation.y) * 0.0012
+                targetEntity.position.y = min(max(nextY, -0.3), 1.5)
+            case .ended, .cancelled, .failed:
+                syncHeightAdjustedTargetToModel()
+            default:
+                break
+            }
+        }
+
+        private func heightAdjustmentTargetEntity() -> ModelEntity? {
+            if viewModel.mode == .shelfEdit,
+               viewModel.shelfMoveMode == .height,
+               viewModel.selectedTarget == ARShelfSelectionTarget.shelf {
+                return shelfEntity
+            }
+
+            if viewModel.mode == .goodsEdit,
+               viewModel.goodsMoveMode == .height,
+               let selectedItemID = viewModel.selectedItemID {
+                return itemEntities[selectedItemID]
+            }
+
+            return nil
+        }
+
+        private func syncHeightAdjustedTargetToModel() {
+            if viewModel.mode == .shelfEdit {
+                syncShelfTransformToModel()
+            } else if viewModel.mode == .goodsEdit {
+                syncTransformsToModel()
+            }
         }
 
         private func selectObject(at point: CGPoint, in arView: ARView) {
@@ -228,15 +286,24 @@ struct ARShelfRealityView: UIViewRepresentable {
 
         private func restoreSavedItems() {
             for item in viewModel.sortedItems {
-                guard let image = ImageStore.load(path: item.imagePath) else {
-                    continue
-                }
+                switch item.contentType {
+                case .image:
+                    guard let image = ImageStore.load(path: item.imagePath) else {
+                        continue
+                    }
 
-                addItemEntity(for: item, image: image, installGestures: true)
+                    addImageItemEntity(for: item, image: image, installGestures: true)
+                case .model3D:
+                    guard let modelPath = item.modelPath else {
+                        continue
+                    }
+
+                    addModelItemEntity(for: item, modelPath: modelPath, installGestures: true)
+                }
             }
         }
 
-        private func addItemEntity(for item: PlacedItem, image: UIImage, installGestures: Bool) {
+        private func addImageItemEntity(for item: PlacedItem, image: UIImage, installGestures: Bool) {
             guard let shelfEntity else {
                 return
             }
@@ -251,6 +318,33 @@ struct ARShelfRealityView: UIViewRepresentable {
             shelfEntity.addChild(entity)
             itemEntities[item.id] = entity
             itemCollisionSizes[item.id] = collisionSize
+            itemCollisionCenters[item.id] = .zero
+
+            if installGestures, let arView {
+                itemGestureRecognizers[item.id] = arView.installGestures([.translation, .rotation, .scale], for: entity)
+                updateCollisionAvailability()
+                updateGestureAvailability()
+            }
+        }
+
+        private func addModelItemEntity(for item: PlacedItem, modelPath: String, installGestures: Bool) {
+            guard let shelfEntity,
+                  let modelURL = ScannedModelStore.url(forRelativePath: modelPath),
+                  let modelGoods = ModelGoodsEntityFactory.makeModelEntity(url: modelURL) else {
+                viewModel.statusMessage = "3Dモデルを読み込めませんでした。"
+                return
+            }
+
+            let entity = modelGoods.entity
+            let snapshot = item.transformSnapshot
+            entity.position = snapshot.position
+            entity.orientation = snapshot.quaternion
+            entity.scale = snapshot.scale
+            entity.name = item.id.uuidString
+            shelfEntity.addChild(entity)
+            itemEntities[item.id] = entity
+            itemCollisionSizes[item.id] = modelGoods.collisionSize
+            itemCollisionCenters[item.id] = modelGoods.collisionCenter
 
             if installGestures, let arView {
                 itemGestureRecognizers[item.id] = arView.installGestures([.translation, .rotation, .scale], for: entity)
@@ -294,16 +388,21 @@ struct ARShelfRealityView: UIViewRepresentable {
         private func updateGestureAvailability() {
             let isShelfSelected = viewModel.mode == .shelfEdit
                 && viewModel.selectedTarget == ARShelfSelectionTarget.shelf
+            let isShelfHeightAdjustment = isShelfSelected && viewModel.shelfMoveMode == .height
+            let isGoodsHeightAdjustment = viewModel.mode == .goodsEdit
+                && viewModel.goodsMoveMode == .height
+                && viewModel.selectedItemID != nil
 
             shelfGestureRecognizers.forEach { recognizer in
-                recognizer.isEnabled = isShelfSelected
+                recognizer.isEnabled = isShelfSelected && isShelfHeightAdjustment == false
             }
+            heightPanGesture?.isEnabled = isShelfHeightAdjustment || isGoodsHeightAdjustment
 
             for (itemID, recognizers) in itemGestureRecognizers {
                 let isSelectedItem = viewModel.mode == .goodsEdit
                     && viewModel.selectedTarget == ARShelfSelectionTarget.item(itemID)
                 recognizers.forEach { recognizer in
-                    recognizer.isEnabled = isSelectedItem
+                    recognizer.isEnabled = isSelectedItem && isGoodsHeightAdjustment == false
                 }
             }
         }
@@ -316,7 +415,8 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             for (itemID, entity) in itemEntities {
                 let size = itemCollisionSizes[itemID] ?? GoodsEntityFactory.defaultSize
-                setCollision(on: entity, isEnabled: areItemCollisionsEnabled, size: size)
+                let center = itemCollisionCenters[itemID] ?? .zero
+                setCollision(on: entity, isEnabled: areItemCollisionsEnabled, size: size, center: center)
             }
         }
 
@@ -328,12 +428,24 @@ struct ARShelfRealityView: UIViewRepresentable {
             setCollision(on: shelfEntity, isEnabled: isEnabled, size: ShelfEntityFactory.collisionSize)
         }
 
-        private func setCollision(on entity: ModelEntity, isEnabled: Bool, size: SIMD3<Float>) {
-            let shapes: [ShapeResource] = isEnabled ? [.generateBox(size: size)] : []
+        private func setCollision(
+            on entity: ModelEntity,
+            isEnabled: Bool,
+            size: SIMD3<Float>,
+            center: SIMD3<Float> = .zero
+        ) {
+            let shapes: [ShapeResource] = isEnabled
+                ? [.generateBox(size: size).offsetBy(translation: center)]
+                : []
             entity.components.set(CollisionComponent(shapes: shapes))
         }
 
         private func updateSelectionOutline() {
+            if isInterfaceHidden {
+                clearSelectionOutline()
+                return
+            }
+
             guard outlinedTarget != viewModel.selectedTarget else {
                 return
             }
@@ -360,8 +472,12 @@ struct ARShelfRealityView: UIViewRepresentable {
                     return
                 }
 
+                let outlineSize = itemCollisionSizes[itemID]
+                    ?? (item.contentType == .model3D ? ModelGoodsEntityFactory.defaultCollisionSize : GoodsEntityFactory.size(forImageAt: item.imagePath))
+                let outlineCenter = itemCollisionCenters[itemID] ?? .zero
                 let outline = SelectionOutlineFactory.makeOutline(
-                    size: GoodsEntityFactory.size(forImageAt: item.imagePath),
+                    size: outlineSize,
+                    center: outlineCenter,
                     color: UIColor.systemBlue
                 )
                 itemEntity.addChild(outline)
@@ -494,6 +610,71 @@ enum GoodsEntityFactory {
         material.color = .init(texture: .init(texture))
         return material
     }
+}
+
+/// 保存済みUSDZを棚に置きやすいサイズの3DグッズEntityへ変換します。
+enum ModelGoodsEntityFactory {
+    static let defaultCollisionSize = SIMD3<Float>(0.14, 0.14, 0.14)
+
+    @MainActor
+    static func makeModelEntity(url: URL) -> ModelGoodsEntity? {
+        guard let loadedEntity = try? Entity.load(contentsOf: url) else {
+            return nil
+        }
+
+        let root = ModelEntity()
+        var collisionSize = defaultCollisionSize
+        var collisionCenter = SIMD3<Float>(0, defaultCollisionSize.y / 2, 0)
+
+        let bounds = loadedEntity.visualBounds(relativeTo: loadedEntity)
+        if bounds.isEmpty == false {
+            let maxExtent = max(bounds.extents.x, bounds.extents.y, bounds.extents.z)
+            var normalizedScale: Float = 1.0
+            if maxExtent > 0 {
+                normalizedScale = min(0.12 / maxExtent, 1.0)
+                loadedEntity.scale = SIMD3<Float>(repeating: normalizedScale)
+            }
+
+            let bottomAlignedCenter = SIMD3<Float>(
+                bounds.center.x,
+                bounds.min.y,
+                bounds.center.z
+            )
+            loadedEntity.position = -bottomAlignedCenter * normalizedScale
+
+            let trimmedSize = bounds.extents * normalizedScale
+            collisionSize = SIMD3<Float>(
+                max(trimmedSize.x, 0.02),
+                max(trimmedSize.y, 0.02),
+                max(trimmedSize.z, 0.02)
+            )
+            collisionCenter = SIMD3<Float>(
+                0,
+                collisionSize.y / 2,
+                0
+            )
+        } else {
+            loadedEntity.scale = SIMD3<Float>(repeating: 0.25)
+        }
+
+        root.components.set(
+            CollisionComponent(shapes: [
+                .generateBox(size: collisionSize).offsetBy(translation: collisionCenter)
+            ])
+        )
+        root.addChild(loadedEntity)
+        return ModelGoodsEntity(
+            entity: root,
+            collisionSize: collisionSize,
+            collisionCenter: collisionCenter
+        )
+    }
+}
+
+struct ModelGoodsEntity {
+    let entity: ModelEntity
+    let collisionSize: SIMD3<Float>
+    let collisionCenter: SIMD3<Float>
 }
 
 /// 選択中Entityに取り付ける、細いBoxを組み合わせた選択枠です。

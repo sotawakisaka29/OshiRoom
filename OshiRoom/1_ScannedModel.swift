@@ -1,0 +1,109 @@
+import Foundation
+import SwiftData
+
+/// 物体スキャンで作成した3Dモデルまたは試験用スキャン記録です。
+@Model
+final class ScannedModel {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var methodRawValue: String
+    var statusRawValue: String
+    var modelPath: String?
+    var captureDirectoryPath: String?
+    var shotCount: Int
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        method: ScanMethod,
+        status: ScannedModelStatus = .captured,
+        modelPath: String? = nil,
+        captureDirectoryPath: String? = nil,
+        shotCount: Int = 0,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.name = name
+        self.methodRawValue = method.rawValue
+        self.statusRawValue = status.rawValue
+        self.modelPath = modelPath
+        self.captureDirectoryPath = captureDirectoryPath
+        self.shotCount = shotCount
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    var method: ScanMethod {
+        get { ScanMethod(rawValue: methodRawValue) ?? .lidar }
+        set { methodRawValue = newValue.rawValue }
+    }
+
+    var status: ScannedModelStatus {
+        get { ScannedModelStatus(rawValue: statusRawValue) ?? .captured }
+        set { statusRawValue = newValue.rawValue }
+    }
+}
+
+enum ScanMethod: String, CaseIterable, Identifiable {
+    case lidar
+    case photogrammetry
+    case trueDepth
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .lidar:
+            "LiDARスキャン"
+        case .photogrammetry:
+            "フォトグラメトリ"
+        case .trueDepth:
+            "TrueDepth補助"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .lidar:
+            "LiDAR"
+        case .photogrammetry:
+            "Photo"
+        case .trueDepth:
+            "Depth"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .lidar:
+            "viewfinder"
+        case .photogrammetry:
+            "camera.aperture"
+        case .trueDepth:
+            "faceid"
+        }
+    }
+}
+
+enum ScannedModelStatus: String {
+    case captured
+    case processing
+    case ready
+    case failed
+
+    var title: String {
+        switch self {
+        case .captured:
+            "撮影済み"
+        case .processing:
+            "生成中"
+        case .ready:
+            "プレビュー可能"
+        case .failed:
+            "生成失敗"
+        }
+    }
+}

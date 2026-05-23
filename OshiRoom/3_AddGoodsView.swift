@@ -1,13 +1,25 @@
 import PhotosUI
+import SwiftData
 import SwiftUI
 import UIKit
 
 /// 写真を選択し、背景除去済みグッズを作成する画面です。
 struct AddGoodsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Query(sort: \ScannedModel.updatedAt, order: .reverse) private var scannedModels: [ScannedModel]
     @State private var viewModel = AddGoodsViewModel()
     @State private var isShowingCamera = false
+    @State private var isShowingModelSelection = false
     let onCreated: (UIImage, String) -> Void
+    let onModelSelected: (ScannedModel) -> Void
+
+    init(
+        onCreated: @escaping (UIImage, String) -> Void,
+        onModelSelected: @escaping (ScannedModel) -> Void = { _ in }
+    ) {
+        self.onCreated = onCreated
+        self.onModelSelected = onModelSelected
+    }
 
     var body: some View {
         @Bindable var viewModel = viewModel
@@ -57,6 +69,22 @@ struct AddGoodsView: View {
                             )
                     }
                     .disabled(viewModel.isProcessing)
+
+                    Button {
+                        isShowingModelSelection = true
+                    } label: {
+                        Label("3Dモデルを選択", systemImage: "cube")
+                            .font(.headline)
+                            .foregroundStyle(AppColors.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 56)
+                            .background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                    .stroke(AppColors.separator, lineWidth: 1)
+                            )
+                    }
+                    .disabled(availableModels.isEmpty || viewModel.isProcessing)
                 }
 
                 if viewModel.isProcessing {
@@ -95,7 +123,19 @@ struct AddGoodsView: View {
                 }
                 .ignoresSafeArea()
             }
+            .sheet(isPresented: $isShowingModelSelection) {
+                ScannedModelPickerView(models: availableModels) { model in
+                    onModelSelected(model)
+                    isShowingModelSelection = false
+                    dismiss()
+                }
+                .presentationDetents([.medium, .large])
+            }
         }
+    }
+
+    private var availableModels: [ScannedModel] {
+        scannedModels.filter { $0.modelPath != nil }
     }
 
     private var canUseCamera: Bool {
@@ -132,6 +172,59 @@ struct AddGoodsView: View {
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
                     .stroke(AppColors.separator, lineWidth: 1)
             )
+        }
+    }
+}
+
+struct ScannedModelPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let models: [ScannedModel]
+    let onSelect: (ScannedModel) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if models.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "cube.transparent")
+                            .font(.system(size: 42, weight: .light))
+                            .foregroundStyle(AppColors.textSecondary)
+                        Text("選択できる3Dモデルがありません")
+                            .font(.headline)
+                            .foregroundStyle(AppColors.textPrimary)
+                        Text("先に3Dモデルを生成してください。")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+                } else {
+                    List {
+                        ForEach(models) { model in
+                            Button {
+                                onSelect(model)
+                            } label: {
+                                ScannedModelRow(model: model)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+                }
+            }
+            .navigationTitle("3Dモデルを選択")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") {
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }

@@ -4,7 +4,8 @@ import SwiftData
 enum PreviewModelContainer {
     @MainActor
     static func make() -> ModelContainer {
-        let schema = Schema([Shelf.self, PlacedItem.self])
+        let modelTypes: [any PersistentModel.Type] = [Shelf.self, PlacedItem.self, ScannedModel.self]
+        let schema = Schema(modelTypes)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
 
         do {
@@ -13,7 +14,7 @@ enum PreviewModelContainer {
             container.mainContext.insert(shelf)
             return container
         } catch {
-            let fallbackSchema = Schema([Shelf.self, PlacedItem.self])
+            let fallbackSchema = Schema(modelTypes)
             let fallbackConfiguration = ModelConfiguration(schema: fallbackSchema, isStoredInMemoryOnly: true)
             guard let fallback = try? ModelContainer(for: fallbackSchema, configurations: [fallbackConfiguration]) else {
                 fatalError("Preview用のModelContainerを作成できませんでした。")
