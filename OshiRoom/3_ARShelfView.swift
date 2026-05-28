@@ -23,6 +23,7 @@ struct ARShelfView: View {
         .navigationTitle(viewModel.shelf.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(isInterfaceHidden ? .hidden : .visible, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
     }
 
     private var arPlacementContent: some View {
@@ -203,7 +204,7 @@ struct CameraUsageDescriptionMissingView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+        .background(AppColors.groupedBackground)
     }
 }
 

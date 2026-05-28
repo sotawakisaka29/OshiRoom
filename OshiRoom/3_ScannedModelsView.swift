@@ -5,6 +5,7 @@ import SwiftUI
 struct ScannedModelsView: View {
     @Query(sort: \ScannedModel.updatedAt, order: .reverse) private var models: [ScannedModel]
     @State private var selectedModel: ScannedModel?
+    @State private var isShowingModelScanner = false
 
     var body: some View {
         NavigationStack {
@@ -26,11 +27,25 @@ struct ScannedModelsView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+                    .background(AppColors.groupedBackground)
                 }
             }
             .navigationTitle("3Dモデル")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isShowingModelScanner = true
+                    } label: {
+                        Image(systemName: "camera.viewfinder")
+                    }
+                    .accessibilityLabel("物体スキャン")
+                }
+            }
+            .sheet(isPresented: $isShowingModelScanner) {
+                ModelScanView()
+                    .presentationDetents([.large])
+            }
             .navigationDestination(item: $selectedModel) { model in
                 ScannedModelPreviewView(model: model)
             }
@@ -45,14 +60,14 @@ struct ScannedModelsView: View {
             Text("まだ3Dモデルがありません")
                 .font(.headline)
                 .foregroundStyle(AppColors.textPrimary)
-            Text("トップ右上のカメラからLiDARまたはフォトグラメトリの試験スキャンを開始できます。")
+            Text("3Dモデル一覧の右上のカメラからLiDARまたはフォトグラメトリの試験スキャンを開始できます。")
                 .font(.subheadline)
                 .foregroundStyle(AppColors.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+        .background(AppColors.groupedBackground)
     }
 }
 
@@ -63,7 +78,7 @@ struct ScannedModelRow: View {
         HStack(spacing: 14) {
             Image(systemName: model.method.symbolName)
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(AppColors.background)
                 .frame(width: 52, height: 52)
                 .background(methodColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
@@ -115,7 +130,7 @@ struct ScannedModelPreviewView: View {
         VStack(spacing: 16) {
             ScannedModelPreviewRealityView(scannedModel: model)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.white)
+                .background(AppColors.background)
                 .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -136,7 +151,7 @@ struct ScannedModelPreviewView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 18)
         }
-        .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+        .background(AppColors.groupedBackground)
         .navigationTitle(model.name)
         .navigationBarTitleDisplayMode(.inline)
     }

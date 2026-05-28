@@ -75,6 +75,28 @@ enum ScannedModelStore {
         return try? JSONDecoder().decode(TrueDepthSnapshot.self, from: data)
     }
 
+    static func loadCaptureThumbnailData(relativePath: String) -> Data? {
+        guard let directoryURL = url(forRelativePath: relativePath) else {
+            return nil
+        }
+
+        let fileManager = FileManager.default
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let imageURL = urls.sorted { $0.lastPathComponent < $1.lastPathComponent }.first { url in
+            let lowercased = url.pathExtension.lowercased()
+            return lowercased == "jpg" || lowercased == "jpeg" || lowercased == "png"
+        }
+
+        return imageURL.flatMap { try? Data(contentsOf: $0) }
+    }
+
     static func modelFileName(for id: UUID) -> String {
         "\(id.uuidString).usdz"
     }

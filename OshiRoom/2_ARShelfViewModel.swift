@@ -34,7 +34,7 @@ final class ARShelfViewModel {
 
     func queueGoods(image: UIImage, imagePath: String, modelContext: ModelContext) {
         let slotIndex = nextAvailableSlotIndex()
-        let backwardTilt = simd_quatf(angle: Float.pi / 12, axis: SIMD3<Float>(1, 0, 0))
+        let backwardTilt = simd_quatf(angle: -Float.pi / 12, axis: SIMD3<Float>(1, 0, 0))
         let transform = TransformSnapshot(position: slotPosition(for: slotIndex), rotation: backwardTilt)
         let item = PlacedItem(
             imagePath: imagePath,

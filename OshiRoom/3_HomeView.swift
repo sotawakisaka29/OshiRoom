@@ -54,9 +54,9 @@ struct HomeView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.title2.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AppColors.background)
                         .frame(width: 60, height: 60)
-                        .background(.black, in: Circle())
+                        .background(AppColors.textPrimary, in: Circle())
                         .shadow(color: .black.opacity(0.18), radius: 18, y: 10)
                 }
                 .padding(.trailing, 22)
@@ -73,13 +73,6 @@ struct HomeView: View {
                         Label("3Dモデル", systemImage: "cube")
                     }
                     .accessibilityLabel("3Dモデル一覧")
-
-                    Button {
-                        isShowingModelScanner = true
-                    } label: {
-                        Image(systemName: "camera.viewfinder")
-                    }
-                    .accessibilityLabel("物体スキャン")
                 }
             }
             .sheet(isPresented: $isShowingCreation) {
@@ -125,7 +118,7 @@ struct HomeView: View {
 
     private var background: some View {
         LinearGradient(
-            colors: [Color.white, Color(red: 0.96, green: 0.96, blue: 0.94)],
+            colors: [AppColors.background, AppColors.groupedBackground],
             startPoint: .top,
             endPoint: .bottom
         )
@@ -339,7 +332,7 @@ struct ShelfObjectListView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+                    .background(AppColors.groupedBackground)
                 }
             }
             .navigationTitle("追加済みオブジェクト一覧")
@@ -373,7 +366,7 @@ struct ShelfObjectListView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+        .background(AppColors.groupedBackground)
     }
 
     private func saveChanges() {

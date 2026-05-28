@@ -35,7 +35,7 @@ struct ModelScanView: View {
                     }
                 }
             }
-            .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+            .background(AppColors.groupedBackground)
             .navigationTitle("物体スキャン")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -91,7 +91,7 @@ struct LiDARScanView: View {
             } label: {
                 Label("LiDARスキャンを保存", systemImage: "square.and.arrow.down")
                     .font(.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppColors.background)
                     .frame(maxWidth: .infinity)
                     .frame(height: 54)
                     .background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -179,7 +179,7 @@ struct TrueDepthAssistScanView: View {
             } label: {
                 Label("TrueDepth補助データを保存", systemImage: "square.and.arrow.down")
                     .font(.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppColors.background)
                     .frame(maxWidth: .infinity)
                     .frame(height: 54)
                     .background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -445,6 +445,7 @@ struct PhotogrammetryScanView: View {
     }
 
     private func savePhotogrammetryModel(outputPath: String, captureDirectoryPath: String) {
+        let thumbnailData = ScannedModelStore.loadCaptureThumbnailData(relativePath: captureDirectoryPath)
         let model = ScannedModel(
             id: currentModelID,
             name: "フォトモデル\(Date().formatted(date: .omitted, time: .shortened))",
@@ -452,6 +453,7 @@ struct PhotogrammetryScanView: View {
             status: .ready,
             modelPath: outputPath,
             captureDirectoryPath: captureDirectoryPath,
+            thumbnailData: thumbnailData,
             shotCount: shotsTaken
         )
         modelContext.insert(model)
@@ -467,12 +469,14 @@ struct PhotogrammetryScanView: View {
     }
 
     private func saveFailedPhotogrammetryModel(captureDirectoryPath: String) {
+        let thumbnailData = ScannedModelStore.loadCaptureThumbnailData(relativePath: captureDirectoryPath)
         let model = ScannedModel(
             id: currentModelID,
             name: "フォトモデル\(Date().formatted(date: .omitted, time: .shortened))",
             method: .photogrammetry,
             status: .failed,
             captureDirectoryPath: captureDirectoryPath,
+            thumbnailData: thumbnailData,
             shotCount: shotsTaken
         )
         modelContext.insert(model)
@@ -549,7 +553,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+        .background(AppColors.groupedBackground)
     }
 
     private var objectCaptureUnsupportedView: some View {
@@ -820,6 +824,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
     }
 
     private func saveObjectCaptureModel(outputPath: String, captureDirectoryPath: String) {
+        let thumbnailData = ScannedModelStore.loadCaptureThumbnailData(relativePath: captureDirectoryPath)
         let model = ScannedModel(
             id: currentModelID,
             name: "ObjectCapture\(Date().formatted(date: .omitted, time: .shortened))",
@@ -827,6 +832,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
             status: .ready,
             modelPath: outputPath,
             captureDirectoryPath: captureDirectoryPath,
+            thumbnailData: thumbnailData,
             shotCount: session?.numberOfShotsTaken ?? 0
         )
         modelContext.insert(model)
@@ -834,12 +840,14 @@ struct ObjectCapturePhotogrammetryScanView: View {
     }
 
     private func saveFailedObjectCaptureModel(captureDirectoryPath: String) {
+        let thumbnailData = ScannedModelStore.loadCaptureThumbnailData(relativePath: captureDirectoryPath)
         let model = ScannedModel(
             id: currentModelID,
             name: "ObjectCapture\(Date().formatted(date: .omitted, time: .shortened))",
             method: .objectCapture,
             status: .failed,
             captureDirectoryPath: captureDirectoryPath,
+            thumbnailData: thumbnailData,
             shotCount: session?.numberOfShotsTaken ?? 0
         )
         modelContext.insert(model)
@@ -886,7 +894,7 @@ struct ScanActionButton: View {
     var body: some View {
         Label(title, systemImage: symbolName)
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(AppColors.background)
             .frame(maxWidth: .infinity)
             .frame(height: 50)
             .background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

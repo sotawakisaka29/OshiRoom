@@ -10,6 +10,7 @@ final class ScannedModel {
     var statusRawValue: String
     var modelPath: String?
     var captureDirectoryPath: String?
+    var thumbnailData: Data?
     var shotCount: Int
     var createdAt: Date
     var updatedAt: Date
@@ -21,6 +22,7 @@ final class ScannedModel {
         status: ScannedModelStatus = .captured,
         modelPath: String? = nil,
         captureDirectoryPath: String? = nil,
+        thumbnailData: Data? = nil,
         shotCount: Int = 0,
         createdAt: Date = .now,
         updatedAt: Date = .now
@@ -31,6 +33,7 @@ final class ScannedModel {
         self.statusRawValue = status.rawValue
         self.modelPath = modelPath
         self.captureDirectoryPath = captureDirectoryPath
+        self.thumbnailData = thumbnailData
         self.shotCount = shotCount
         self.createdAt = createdAt
         self.updatedAt = updatedAt

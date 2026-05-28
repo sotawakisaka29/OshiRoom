@@ -31,7 +31,7 @@ struct ShelfCreationView: View {
                             .textInputAutocapitalization(.never)
                             .foregroundStyle(AppColors.textPrimary)
                             .padding(16)
-                            .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .background(AppColors.background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                                     .stroke(AppColors.separator, lineWidth: 1)
@@ -61,7 +61,7 @@ struct ShelfCreationView: View {
                 }
                 .padding(22)
             }
-            .background(Color(red: 0.98, green: 0.98, blue: 0.97).ignoresSafeArea())
+            .background(AppColors.groupedBackground.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") {
@@ -111,13 +111,13 @@ struct ShelfTemplateRow: View {
 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundStyle(isSelected ? Color.black : AppColors.textMuted)
+                    .foregroundStyle(isSelected ? AppColors.textPrimary : AppColors.textMuted)
             }
             .padding(14)
             .background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(isSelected ? Color.black.opacity(0.28) : AppColors.separator, lineWidth: 1)
+                    .stroke(isSelected ? AppColors.textPrimary.opacity(0.28) : AppColors.separator, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

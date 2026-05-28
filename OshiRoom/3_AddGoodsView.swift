@@ -43,10 +43,10 @@ struct AddGoodsView: View {
                     PhotosPicker(selection: $viewModel.selectedItem, matching: .images) {
                         Label("写真を選択", systemImage: "photo.on.rectangle")
                             .font(.headline)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AppColors.background)
                             .frame(maxWidth: .infinity)
                             .frame(height: 56)
-                            .background(.black, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     }
                     .disabled(viewModel.isProcessing)
 
@@ -95,7 +95,7 @@ struct AddGoodsView: View {
                 Spacer()
             }
             .padding(22)
-            .background(Color(red: 0.98, green: 0.98, blue: 0.97).ignoresSafeArea())
+            .background(AppColors.groupedBackground.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") {
@@ -151,7 +151,7 @@ struct AddGoodsView: View {
                 .frame(maxHeight: 260)
                 .frame(maxWidth: .infinity)
                 .padding(24)
-                .background(.white, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .background(AppColors.background, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
                         .stroke(AppColors.separator, lineWidth: 1)
@@ -197,7 +197,7 @@ struct ScannedModelPickerView: View {
                             .foregroundStyle(AppColors.textSecondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+                    .background(AppColors.groupedBackground)
                 } else {
                     List {
                         ForEach(models) { model in
@@ -213,7 +213,7 @@ struct ScannedModelPickerView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(Color(red: 0.98, green: 0.98, blue: 0.97))
+                    .background(AppColors.groupedBackground)
                 }
             }
             .navigationTitle("3Dモデルを選択")

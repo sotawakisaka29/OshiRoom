@@ -55,13 +55,13 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
     private func previewScale(for method: ScanMethod) -> SIMD3<Float> {
         switch method {
         case .lidar:
-            [0.55, 0.55, 0.55]
+            [0.72, 0.72, 0.72]
         case .photogrammetry:
-            [0.35, 0.35, 0.35]
+            [0.48, 0.48, 0.48]
         case .objectCapture:
-            [0.35, 0.35, 0.35]
+            [0.48, 0.48, 0.48]
         case .trueDepth:
-            [1.2, 1.2, 1.2]
+            [1.5, 1.5, 1.5]
         }
     }
 
@@ -150,7 +150,7 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
             isMetallic: false
         )
         let entity = ModelEntity(mesh: mesh, materials: [material])
-        entity.scale = [0.55, 0.55, 0.55]
+        entity.scale = [0.72, 0.72, 0.72]
         return entity
     }
 

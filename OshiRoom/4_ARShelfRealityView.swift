@@ -574,7 +574,7 @@ enum GoodsEntityFactory {
         let planeMesh = MeshResource.generatePlane(width: size.x, height: size.y)
         let frontMaterial = textureMaterial(from: image, faceCulling: .back)
         let backMaterial = textureMaterial(
-            from: image.horizontallyMirroredForRendering(),
+            from: image,
             faceCulling: .front
         )
         let frontEntity = ModelEntity(mesh: planeMesh, materials: [frontMaterial])
@@ -584,6 +584,7 @@ enum GoodsEntityFactory {
         backEntity.position.z = -size.z / 2
         root.addChild(frontEntity)
         root.addChild(backEntity)
+        makeSideEntities(from: image, size: size).forEach { root.addChild($0) }
         root.components.set(CollisionComponent(shapes: [.generateBox(size: size)]))
         return root
     }
@@ -625,6 +626,414 @@ enum GoodsEntityFactory {
         material.opacityThreshold = 0.01
         material.faceCulling = faceCulling
         return material
+    }
+
+    private static func makeSideEntities(from image: UIImage, size: SIMD3<Float>) -> [ModelEntity] {
+        guard let pixelData = pixelData(for: image) else {
+            return []
+        }
+
+        let frontZ = size.z / 2
+        let backZ = -size.z / 2
+        let scaleX = size.x / Float(pixelData.width)
+        let scaleY = size.y / Float(pixelData.height)
+
+        let topTexture = makeTopBottomTexture(from: pixelData, edge: .top)
+        let bottomTexture = makeTopBottomTexture(from: pixelData, edge: .bottom)
+        let leftTexture = makeLeftRightTexture(from: pixelData, edge: .left)
+        let rightTexture = makeLeftRightTexture(from: pixelData, edge: .right)
+
+        let topEntity = makeSideEntity(
+            mesh: makeSideMesh(
+                from: pixelData,
+                size: size,
+                scaleX: scaleX,
+                scaleY: scaleY,
+                frontZ: frontZ,
+                backZ: backZ,
+                edge: .top
+            ),
+            texture: topTexture
+        )
+        let bottomEntity = makeSideEntity(
+            mesh: makeSideMesh(
+                from: pixelData,
+                size: size,
+                scaleX: scaleX,
+                scaleY: scaleY,
+                frontZ: frontZ,
+                backZ: backZ,
+                edge: .bottom
+            ),
+            texture: bottomTexture
+        )
+        let leftEntity = makeSideEntity(
+            mesh: makeSideMesh(
+                from: pixelData,
+                size: size,
+                scaleX: scaleX,
+                scaleY: scaleY,
+                frontZ: frontZ,
+                backZ: backZ,
+                edge: .left
+            ),
+            texture: leftTexture
+        )
+        let rightEntity = makeSideEntity(
+            mesh: makeSideMesh(
+                from: pixelData,
+                size: size,
+                scaleX: scaleX,
+                scaleY: scaleY,
+                frontZ: frontZ,
+                backZ: backZ,
+                edge: .right
+            ),
+            texture: rightTexture
+        )
+
+        return [topEntity, bottomEntity, leftEntity, rightEntity].compactMap { $0 }
+    }
+
+    private static func makeSideEntity(mesh: MeshResource?, texture: UIImage?) -> ModelEntity? {
+        guard let mesh, let texture else {
+            return nil
+        }
+
+        let material = textureMaterial(from: texture)
+        return ModelEntity(mesh: mesh, materials: [material])
+    }
+
+    private static func makeSideMesh(
+        from pixelData: ImagePixelData,
+        size: SIMD3<Float>,
+        scaleX: Float,
+        scaleY: Float,
+        frontZ: Float,
+        backZ: Float,
+        edge: SideEdge
+    ) -> MeshResource? {
+        var builder = MeshBuilder()
+        let width = pixelData.width
+        let height = pixelData.height
+
+        for y in 0..<height {
+            for x in 0..<width {
+                guard pixelData.alpha(atX: x, y: y) > 8 else {
+                    continue
+                }
+
+                switch edge {
+                case .top:
+                    guard y == 0 || pixelData.alpha(atX: x, y: y - 1) <= 8 else { continue }
+                    let yWorld = size.y / 2 - Float(y) * scaleY
+                    let x0 = -size.x / 2 + Float(x) * scaleX
+                    let x1 = x0 + scaleX
+                    builder.addQuad(
+                        p0: [x0, yWorld, frontZ],
+                        p1: [x1, yWorld, frontZ],
+                        p2: [x1, yWorld, backZ],
+                        p3: [x0, yWorld, backZ],
+                        uv0: [Float(x) / Float(width), 0],
+                        uv1: [Float(x + 1) / Float(width), 0],
+                        uv2: [Float(x + 1) / Float(width), 1],
+                        uv3: [Float(x) / Float(width), 1]
+                    )
+                case .bottom:
+                    guard y == height - 1 || pixelData.alpha(atX: x, y: y + 1) <= 8 else { continue }
+                    let yWorld = size.y / 2 - Float(y + 1) * scaleY
+                    let x0 = -size.x / 2 + Float(x) * scaleX
+                    let x1 = x0 + scaleX
+                    builder.addQuad(
+                        p0: [x0, yWorld, frontZ],
+                        p1: [x1, yWorld, frontZ],
+                        p2: [x1, yWorld, backZ],
+                        p3: [x0, yWorld, backZ],
+                        uv0: [Float(x) / Float(width), 0],
+                        uv1: [Float(x + 1) / Float(width), 0],
+                        uv2: [Float(x + 1) / Float(width), 1],
+                        uv3: [Float(x) / Float(width), 1]
+                    )
+                case .left:
+                    guard x == 0 || pixelData.alpha(atX: x - 1, y: y) <= 8 else { continue }
+                    let xWorld = -size.x / 2 + Float(x) * scaleX
+                    let y0 = size.y / 2 - Float(y) * scaleY
+                    let y1 = y0 - scaleY
+                    builder.addQuad(
+                        p0: [xWorld, y0, frontZ],
+                        p1: [xWorld, y1, frontZ],
+                        p2: [xWorld, y1, backZ],
+                        p3: [xWorld, y0, backZ],
+                        uv0: [0, Float(y) / Float(height)],
+                        uv1: [0, Float(y + 1) / Float(height)],
+                        uv2: [1, Float(y + 1) / Float(height)],
+                        uv3: [1, Float(y) / Float(height)]
+                    )
+                case .right:
+                    guard x == width - 1 || pixelData.alpha(atX: x + 1, y: y) <= 8 else { continue }
+                    let xWorld = -size.x / 2 + Float(x + 1) * scaleX
+                    let y0 = size.y / 2 - Float(y) * scaleY
+                    let y1 = y0 - scaleY
+                    builder.addQuad(
+                        p0: [xWorld, y0, frontZ],
+                        p1: [xWorld, y1, frontZ],
+                        p2: [xWorld, y1, backZ],
+                        p3: [xWorld, y0, backZ],
+                        uv0: [0, Float(y) / Float(height)],
+                        uv1: [0, Float(y + 1) / Float(height)],
+                        uv2: [1, Float(y + 1) / Float(height)],
+                        uv3: [1, Float(y) / Float(height)]
+                    )
+                }
+            }
+        }
+
+        guard builder.indices.isEmpty == false else {
+            return nil
+        }
+
+        var descriptor = MeshDescriptor()
+        descriptor.positions = MeshBuffers.Positions(builder.positions)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(builder.uvs)
+        descriptor.primitives = .triangles(builder.indices)
+        return try? MeshResource.generate(from: [descriptor])
+    }
+
+    private static func makeTopBottomTexture(from pixelData: ImagePixelData, edge: TextureEdge) -> UIImage? {
+        let textureHeight = 32
+        let width = pixelData.width
+        var pixels = [UInt8](repeating: 0, count: width * textureHeight * 4)
+        let minimumAlpha: UInt8 = 244
+
+        for x in 0..<width {
+            let sampledColor = edge.sampledColor(from: pixelData, index: x)
+            for y in 0..<textureHeight {
+                let t = CGFloat(y) / CGFloat(max(textureHeight - 1, 1))
+                let shade = CGFloat(0.92 + 0.08 * t)
+                let mixed = lightenedColor(sampledColor, amount: 0.82)
+                let offset = (y * width + x) * 4
+                pixels[offset] = UInt8(clamping: Int(CGFloat(mixed.r) * shade))
+                pixels[offset + 1] = UInt8(clamping: Int(CGFloat(mixed.g) * shade))
+                pixels[offset + 2] = UInt8(clamping: Int(CGFloat(mixed.b) * shade))
+                pixels[offset + 3] = max(sampledColor.a, minimumAlpha)
+            }
+        }
+
+        return image(from: pixels, width: width, height: textureHeight)
+    }
+
+    private static func makeLeftRightTexture(from pixelData: ImagePixelData, edge: TextureEdge) -> UIImage? {
+        let textureWidth = 32
+        let height = pixelData.height
+        var pixels = [UInt8](repeating: 0, count: textureWidth * height * 4)
+        let minimumAlpha: UInt8 = 244
+
+        for y in 0..<height {
+            let sampledColor = edge.sampledColor(from: pixelData, index: y)
+            for x in 0..<textureWidth {
+                let t = CGFloat(x) / CGFloat(max(textureWidth - 1, 1))
+                let shade = CGFloat(0.92 + 0.08 * t)
+                let mixed = lightenedColor(sampledColor, amount: 0.82)
+                let offset = (y * textureWidth + x) * 4
+                pixels[offset] = UInt8(clamping: Int(CGFloat(mixed.r) * shade))
+                pixels[offset + 1] = UInt8(clamping: Int(CGFloat(mixed.g) * shade))
+                pixels[offset + 2] = UInt8(clamping: Int(CGFloat(mixed.b) * shade))
+                pixels[offset + 3] = max(sampledColor.a, minimumAlpha)
+            }
+        }
+
+        return image(from: pixels, width: textureWidth, height: height)
+    }
+
+    private static func image(from pixels: [UInt8], width: Int, height: Int) -> UIImage? {
+        let bytesPerRow = width * 4
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let cgImage = CGImage(
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider,
+                decode: nil,
+                shouldInterpolate: false,
+                intent: .defaultIntent
+              ) else {
+            return nil
+        }
+
+        return UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+    }
+
+    private static func pixelData(for image: UIImage) -> ImagePixelData? {
+        let normalizedImage = image.normalizedForRendering()
+        guard let cgImage = normalizedImage.cgImage else {
+            return nil
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return ImagePixelData(width: width, height: height, pixels: pixels)
+    }
+
+    private static func lightenedColor(_ color: RGBAColor, amount: CGFloat) -> RGBAColor {
+        let mix = min(max(amount, 0), 1)
+        let inverse = 1 - mix
+        return RGBAColor(
+            r: UInt8(clamping: Int(CGFloat(color.r) * inverse + 255 * mix)),
+            g: UInt8(clamping: Int(CGFloat(color.g) * inverse + 255 * mix)),
+            b: UInt8(clamping: Int(CGFloat(color.b) * inverse + 255 * mix)),
+            a: color.a
+        )
+    }
+}
+
+private struct ImagePixelData {
+    let width: Int
+    let height: Int
+    let pixels: [UInt8]
+
+    func alpha(atX x: Int, y: Int) -> UInt8 {
+        pixels[pixelIndex(atX: x, y: y) + 3]
+    }
+
+    func sampledColor(atX x: Int, y: Int) -> RGBAColor {
+        let index = pixelIndex(atX: x, y: y)
+        return RGBAColor(
+            r: pixels[index],
+            g: pixels[index + 1],
+            b: pixels[index + 2],
+            a: pixels[index + 3]
+        )
+    }
+
+    private func pixelIndex(atX x: Int, y: Int) -> Int {
+        (y * width + x) * 4
+    }
+}
+
+private struct RGBAColor {
+    let r: UInt8
+    let g: UInt8
+    let b: UInt8
+    let a: UInt8
+}
+
+private enum SideEdge {
+    case top
+    case bottom
+    case left
+    case right
+}
+
+private enum TextureEdge {
+    case top
+    case bottom
+    case left
+    case right
+
+    func sampledColor(from pixelData: ImagePixelData, index: Int) -> RGBAColor {
+        switch self {
+        case .top:
+            return sampledHorizontalEdgeColor(from: pixelData, column: index, searchFromTop: true)
+        case .bottom:
+            return sampledHorizontalEdgeColor(from: pixelData, column: index, searchFromTop: false)
+        case .left:
+            return sampledVerticalEdgeColor(from: pixelData, row: index, searchFromLeft: true)
+        case .right:
+            return sampledVerticalEdgeColor(from: pixelData, row: index, searchFromLeft: false)
+        }
+    }
+
+    private func sampledHorizontalEdgeColor(
+        from pixelData: ImagePixelData,
+        column: Int,
+        searchFromTop: Bool
+    ) -> RGBAColor {
+        if searchFromTop {
+            for y in 0..<pixelData.height {
+                if pixelData.alpha(atX: column, y: y) > 8 {
+                    return pixelData.sampledColor(atX: column, y: y)
+                }
+            }
+        } else {
+            for y in stride(from: pixelData.height - 1, through: 0, by: -1) {
+                if pixelData.alpha(atX: column, y: y) > 8 {
+                    return pixelData.sampledColor(atX: column, y: y)
+                }
+            }
+        }
+
+        return RGBAColor(r: 160, g: 140, b: 120, a: 255)
+    }
+
+    private func sampledVerticalEdgeColor(
+        from pixelData: ImagePixelData,
+        row: Int,
+        searchFromLeft: Bool
+    ) -> RGBAColor {
+        if searchFromLeft {
+            for x in 0..<pixelData.width {
+                if pixelData.alpha(atX: x, y: row) > 8 {
+                    return pixelData.sampledColor(atX: x, y: row)
+                }
+            }
+        } else {
+            for x in stride(from: pixelData.width - 1, through: 0, by: -1) {
+                if pixelData.alpha(atX: x, y: row) > 8 {
+                    return pixelData.sampledColor(atX: x, y: row)
+                }
+            }
+        }
+
+        return RGBAColor(r: 160, g: 140, b: 120, a: 255)
+    }
+}
+
+private struct MeshBuilder {
+    var positions: [SIMD3<Float>] = []
+    var uvs: [SIMD2<Float>] = []
+    var indices: [UInt32] = []
+
+    mutating func addQuad(
+        p0: SIMD3<Float>,
+        p1: SIMD3<Float>,
+        p2: SIMD3<Float>,
+        p3: SIMD3<Float>,
+        uv0: SIMD2<Float>,
+        uv1: SIMD2<Float>,
+        uv2: SIMD2<Float>,
+        uv3: SIMD2<Float>
+    ) {
+        guard let baseIndex = UInt32(exactly: positions.count) else {
+            return
+        }
+
+        positions.append(contentsOf: [p0, p1, p2, p3])
+        uvs.append(contentsOf: [uv0, uv1, uv2, uv3])
+        indices.append(contentsOf: [
+            baseIndex, baseIndex + 1, baseIndex + 2,
+            baseIndex, baseIndex + 2, baseIndex + 3
+        ])
     }
 }
 
