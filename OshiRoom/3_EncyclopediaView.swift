@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Observation
 import RealityKit
 import SwiftData
 import SwiftUI
@@ -26,6 +27,14 @@ struct EncyclopediaView: View {
         let selectedEntry = selectedSignature.flatMap { signature in
             displayCatalog.entries.first { $0.signature == signature }
         }
+        let selectedScannedModel: ScannedModel? = {
+            guard let entry = selectedEntry,
+                  let modelPath = entry.modelPath else {
+                return nil
+            }
+
+            return scannedModels.first { $0.modelPath == modelPath }
+        }()
 
         ZStack {
             NavigationStack {
@@ -71,6 +80,7 @@ struct EncyclopediaView: View {
             if let selectedEntry {
                 EncyclopediaDetailOverlay(
                     entry: selectedEntry,
+                    scannedModel: selectedScannedModel,
                     namespace: heroNamespace,
                     onClose: {
                         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
@@ -116,7 +126,7 @@ private struct EncyclopediaCatalog {
     init(items: [PlacedItem], scannedModels: [ScannedModel]) {
         let thumbnailMap = scannedModels.reduce(into: [String: Data]()) { result, model in
             guard let modelPath = model.modelPath,
-                  let thumbnailData = model.thumbnailData else {
+                  let thumbnailData = model.previewThumbnailData else {
                 return
             }
 
@@ -184,47 +194,19 @@ private struct EncyclopediaGridCard: View {
     }
 
     private var previewBackgroundStyle: AnyShapeStyle {
-        switch (entry.contentType, colorScheme) {
-        case (.image, .dark):
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.18, green: 0.19, blue: 0.22),
-                        Color(red: 0.09, green: 0.10, blue: 0.12)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        case (.model3D, .dark):
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.19, green: 0.18, blue: 0.24),
-                        Color(red: 0.10, green: 0.10, blue: 0.14)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        case (.image, .light):
-            return AnyShapeStyle(Color(red: 0.94, green: 0.97, blue: 1.0))
-        case (.model3D, .light):
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [Color(red: 0.93, green: 0.96, blue: 1.0), Color(red: 0.84, green: 0.91, blue: 0.98)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-        }
+        encyclopediaPreviewBackground(for: entry.contentType, colorScheme: colorScheme)
     }
 }
 
 private struct EncyclopediaDetailOverlay: View {
     let entry: EncyclopediaEntry
+    let scannedModel: ScannedModel?
     let namespace: Namespace.ID
     let onClose: () -> Void
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var modelPreviewController = EncyclopediaModelPreviewController()
+    @State private var didMarkOpened = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -232,13 +214,13 @@ private struct EncyclopediaDetailOverlay: View {
                 AppColors.background
                     .ignoresSafeArea()
                     .onTapGesture {
-                        onClose()
+                        commitThumbnailAndClose()
                     }
 
                 VStack(spacing: 18) {
                     HStack {
                         Spacer()
-                        Button(action: onClose) {
+                        Button(action: commitThumbnailAndClose) {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 28, weight: .semibold))
                                 .foregroundStyle(AppColors.textSecondary)
@@ -270,6 +252,21 @@ private struct EncyclopediaDetailOverlay: View {
                 }
             }
         }
+        .onAppear {
+            markOpenedIfNeeded()
+        }
+    }
+
+    private func markOpenedIfNeeded() {
+        guard didMarkOpened == false,
+              entry.contentType == .model3D,
+              let scannedModel else {
+            return
+        }
+
+        scannedModel.lastOpenedAt = .now
+        try? modelContext.save()
+        didMarkOpened = true
     }
 
     @ViewBuilder
@@ -278,7 +275,7 @@ private struct EncyclopediaDetailOverlay: View {
         let stageHeight = min(height * 0.74, 860)
 
         RoundedRectangle(cornerRadius: 32, style: .continuous)
-            .fill(AppColors.background)
+            .fill(previewBackgroundStyle)
             .frame(width: stageWidth, height: stageHeight)
             .shadow(color: .black.opacity(0.06), radius: 20, y: 10)
             .matchedGeometryEffect(id: entry.signature, in: namespace)
@@ -296,10 +293,18 @@ private struct EncyclopediaDetailOverlay: View {
             .padding(.horizontal, 16)
     }
 
+    private var previewBackgroundStyle: AnyShapeStyle {
+        encyclopediaPreviewBackground(for: entry.contentType, colorScheme: colorScheme)
+    }
+
     @ViewBuilder
     private var imagePreview: some View {
         if let image = entry.previewImage {
-            EncyclopediaPhotoPreviewRealityView(image: image)
+            EncyclopediaPhotoPreviewRealityView(
+                image: image,
+                cacheKey: entry.imagePath,
+                backgroundColor: encyclopediaPreviewBackgroundColor(for: entry.contentType, colorScheme: colorScheme)
+            )
                 .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
         } else {
             Image(systemName: entry.previewSymbol)
@@ -311,7 +316,12 @@ private struct EncyclopediaDetailOverlay: View {
     @ViewBuilder
     private var modelPreview: some View {
         if let modelPath = entry.modelPath {
-            EncyclopediaModelPreviewRealityView(modelPath: modelPath)
+            EncyclopediaModelPreviewRealityView(
+                modelPath: modelPath,
+                scannedModel: scannedModel,
+                controller: modelPreviewController,
+                backgroundColor: encyclopediaPreviewBackgroundColor(for: entry.contentType, colorScheme: colorScheme)
+            )
                 .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
         } else if let image = entry.previewImage {
             Image(uiImage: image)
@@ -324,10 +334,105 @@ private struct EncyclopediaDetailOverlay: View {
                 .foregroundStyle(entry.previewSymbolTint)
         }
     }
+
+    private func commitThumbnailAndClose() {
+        guard entry.contentType == .model3D,
+              let scannedModel,
+              let transform = modelPreviewController.snapshotCurrentTransform() else {
+            onClose()
+            return
+        }
+
+        scannedModel.previewTransformSnapshot = transform
+
+        if let snapshotImage = modelPreviewController.snapshotCurrentImage(),
+           let thumbnailData = snapshotImage.pngData() {
+            scannedModel.thumbnailData = thumbnailData
+        }
+
+        scannedModel.updatedAt = .now
+        try? modelContext.save()
+        onClose()
+    }
+}
+
+private func encyclopediaPreviewBackground(
+    for contentType: PlacedItemContentType,
+    colorScheme: ColorScheme
+) -> AnyShapeStyle {
+    switch colorScheme {
+    case .dark:
+        return AnyShapeStyle(AppColors.elevatedSurface)
+    case .light:
+        switch contentType {
+        case .image:
+            return AnyShapeStyle(Color(red: 0.94, green: 0.97, blue: 1.0))
+        case .model3D:
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [Color(red: 0.93, green: 0.96, blue: 1.0), Color(red: 0.84, green: 0.91, blue: 0.98)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        }
+    }
+}
+
+private func encyclopediaPreviewBackgroundColor(
+    for contentType: PlacedItemContentType,
+    colorScheme: ColorScheme
+) -> UIColor {
+    switch colorScheme {
+    case .dark:
+        return UIColor.tertiarySystemBackground
+    case .light:
+        switch contentType {
+        case .image:
+            return UIColor(red: 0.94, green: 0.97, blue: 1.0, alpha: 1)
+        case .model3D:
+            return UIColor(red: 0.90, green: 0.94, blue: 0.99, alpha: 1)
+        }
+    }
+}
+
+@Observable
+final class EncyclopediaModelPreviewController {
+    weak var arView: ARView?
+    weak var previewEntity: Entity?
+
+    func snapshotCurrentImage() -> UIImage? {
+        guard let arView, arView.bounds.isEmpty == false else {
+            return nil
+        }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: arView.bounds.size, format: format)
+        return renderer.image { _ in
+            arView.drawHierarchy(in: arView.bounds, afterScreenUpdates: true)
+        }
+    }
+
+    func snapshotCurrentTransform() -> TransformSnapshot? {
+        guard let previewEntity else {
+            return nil
+        }
+
+        return TransformSnapshot(
+            position: previewEntity.position,
+            rotation: previewEntity.orientation,
+            scale: previewEntity.scale
+        )
+    }
 }
 
 private struct EncyclopediaPhotoPreviewRealityView: UIViewRepresentable {
     let image: UIImage
+    let cacheKey: String?
+    let backgroundColor: UIColor
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -335,10 +440,10 @@ private struct EncyclopediaPhotoPreviewRealityView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero, cameraMode: .nonAR, automaticallyConfigureSession: false)
-        arView.environment.background = .color(.white)
+        arView.environment.background = .color(backgroundColor)
 
         let anchor = AnchorEntity(world: .zero)
-        let entity = GoodsEntityFactory.makeGoodsEntity(image: image)
+        let entity = GoodsEntityFactory.makeGoodsEntity(image: image, cacheKey: cacheKey)
         entity.scale = SIMD3<Float>(repeating: 13.0)
         entity.position = [0, 0, -0.7]
         anchor.addChild(entity)
@@ -454,6 +559,9 @@ extension EncyclopediaPhotoPreviewRealityView.Coordinator: UIGestureRecognizerDe
 
 private struct EncyclopediaModelPreviewRealityView: UIViewRepresentable {
     let modelPath: String
+    let scannedModel: ScannedModel?
+    let controller: EncyclopediaModelPreviewController
+    let backgroundColor: UIColor
 
     func makeCoordinator() -> Coordinator {
         Coordinator(modelPath: modelPath)
@@ -461,21 +569,27 @@ private struct EncyclopediaModelPreviewRealityView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero, cameraMode: .nonAR, automaticallyConfigureSession: false)
-        arView.environment.background = .color(.white)
+        arView.environment.background = .color(backgroundColor)
 
         let anchor = AnchorEntity(world: .zero)
         let entity = makePreviewEntity()
-        entity.position = [0, 0, -0.7]
+        applyStoredPreviewTransformIfNeeded(to: entity)
         anchor.addChild(entity)
         arView.scene.addAnchor(anchor)
         context.coordinator.previewEntity = entity
+        context.coordinator.arView = arView
+        controller.previewEntity = entity
+        controller.arView = arView
         context.coordinator.configureInitialState(entity: entity)
         context.coordinator.installGestures(on: arView)
 
         return arView
     }
 
-    func updateUIView(_ uiView: ARView, context: Context) {}
+    func updateUIView(_ uiView: ARView, context: Context) {
+        controller.previewEntity = context.coordinator.previewEntity
+        controller.arView = uiView
+    }
 
     private func makePreviewEntity() -> Entity {
         guard let modelURL = ScannedModelStore.url(forRelativePath: modelPath),
@@ -502,6 +616,18 @@ private struct EncyclopediaModelPreviewRealityView: UIViewRepresentable {
         return entity
     }
 
+    private func applyStoredPreviewTransformIfNeeded(to entity: Entity) {
+        guard let snapshot = scannedModel?.previewTransformSnapshot,
+              snapshot != .identity else {
+            entity.position = [0, 0, -0.7]
+            return
+        }
+
+        entity.position = snapshot.position
+        entity.orientation = snapshot.quaternion
+        entity.scale = snapshot.scale
+    }
+
     private func placeholderEntity() -> Entity {
         let root = Entity()
         let material = SimpleMaterial(color: UIColor(red: 0.92, green: 0.92, blue: 0.94, alpha: 1), roughness: 0.4, isMetallic: false)
@@ -512,6 +638,7 @@ private struct EncyclopediaModelPreviewRealityView: UIViewRepresentable {
 
     final class Coordinator: NSObject {
         weak var previewEntity: Entity?
+        weak var arView: ARView?
         private var baseScale: SIMD3<Float> = .one
         private var baseRotation = simd_quatf(angle: 0, axis: [0, 1, 0])
         private var basePosition = SIMD3<Float>(0, 0, -0.7)

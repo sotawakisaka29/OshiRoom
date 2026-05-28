@@ -1,4 +1,5 @@
 import ARKit
+import CryptoKit
 import RealityKit
 import SwiftData
 import SwiftUI
@@ -308,7 +309,7 @@ struct ARShelfRealityView: UIViewRepresentable {
                 return
             }
 
-            let entity = GoodsEntityFactory.makeGoodsEntity(image: image)
+            let entity = GoodsEntityFactory.makeGoodsEntity(image: image, cacheKey: item.imagePath)
             let collisionSize = GoodsEntityFactory.size(for: image)
             let snapshot = item.transformSnapshot
             entity.position = snapshot.position
@@ -568,7 +569,17 @@ enum ShelfEntityFactory {
 
 /// 背景除去済み画像を薄い板状のグッズEntityへ変換します。
 enum GoodsEntityFactory {
-    static func makeGoodsEntity(image: UIImage) -> ModelEntity {
+    private static let goodsEntityCache: NSCache<NSString, ModelEntity> = {
+        let cache = NSCache<NSString, ModelEntity>()
+        cache.countLimit = 40
+        return cache
+    }()
+
+    static func makeGoodsEntity(image: UIImage, cacheKey: String? = nil) -> ModelEntity {
+        if let cacheKey, let cachedEntity = goodsEntityCache.object(forKey: cacheKey as NSString) {
+            return cachedEntity.clone(recursive: true)
+        }
+
         let size = size(for: image)
         let root = ModelEntity()
         let planeMesh = MeshResource.generatePlane(width: size.x, height: size.y)
@@ -586,7 +597,14 @@ enum GoodsEntityFactory {
         root.addChild(backEntity)
         makeSideEntities(from: image, size: size).forEach { root.addChild($0) }
         root.components.set(CollisionComponent(shapes: [.generateBox(size: size)]))
+
+        let resolvedCacheKey = cacheKey ?? makeImageCacheKey(for: image)
+        goodsEntityCache.setObject(root, forKey: resolvedCacheKey as NSString)
         return root
+    }
+
+    static func makeGoodsEntity(image: UIImage) -> ModelEntity {
+        makeGoodsEntity(image: image, cacheKey: nil)
     }
 
     static func size(forImageAt path: String) -> SIMD3<Float> {
@@ -608,6 +626,15 @@ enum GoodsEntityFactory {
         let width = max(height * aspectRatio, 0.06)
         let depth: Float = 0.015
         return SIMD3<Float>(width, height, depth)
+    }
+
+    private static func makeImageCacheKey(for image: UIImage) -> String {
+        let normalizedImage = image.normalizedForRendering()
+        guard let data = normalizedImage.pngData() else {
+            return UUID().uuidString
+        }
+
+        return SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
     }
 
     private static func textureMaterial(

@@ -1,5 +1,7 @@
 import Foundation
+import Metal
 import SceneKit
+import UIKit
 
 struct ScannedModelSaveResult {
     let captureDirectoryPath: String
@@ -95,6 +97,30 @@ enum ScannedModelStore {
         }
 
         return imageURL.flatMap { try? Data(contentsOf: $0) }
+    }
+
+    static func loadModelThumbnailData(relativePath: String) -> Data? {
+        guard let modelURL = url(forRelativePath: relativePath),
+              let scene = try? SCNScene(url: modelURL, options: nil),
+              let device = MTLCreateSystemDefaultDevice() else {
+            return nil
+        }
+
+        let renderedSize = CGSize(width: 512, height: 512)
+        let renderer = SCNRenderer(device: device, options: nil)
+        renderer.scene = scene
+        scene.background.contents = UIColor.systemBackground
+
+        let cameraNode = makeThumbnailCameraNode(for: scene)
+        scene.rootNode.addChildNode(cameraNode)
+        renderer.pointOfView = cameraNode
+
+        let image = renderer.snapshot(
+            atTime: 0,
+            with: renderedSize,
+            antialiasingMode: .multisampling4X
+        )
+        return image.pngData()
     }
 
     static func modelFileName(for id: UUID) -> String {
@@ -222,6 +248,108 @@ enum ScannedModelStore {
         material.isDoubleSided = true
         material.lightingModel = .physicallyBased
         return material
+    }
+
+    private static func makeThumbnailCameraNode(for scene: SCNScene) -> SCNNode {
+        let bounds = aggregateBoundingBox(for: scene.rootNode) ?? (
+            min: SCNVector3(-0.2, -0.2, -0.2),
+            max: SCNVector3(0.2, 0.2, 0.2)
+        )
+
+        let center = SCNVector3(
+            (bounds.min.x + bounds.max.x) * 0.5,
+            (bounds.min.y + bounds.max.y) * 0.5,
+            (bounds.min.z + bounds.max.z) * 0.5
+        )
+        let extentX = bounds.max.x - bounds.min.x
+        let extentY = bounds.max.y - bounds.min.y
+        let extentZ = bounds.max.z - bounds.min.z
+        let maxExtent = max(extentX, extentY, extentZ, 0.01)
+
+        let cameraNode = SCNNode()
+        cameraNode.camera = SCNCamera()
+        cameraNode.camera?.fieldOfView = 55
+        cameraNode.camera?.zNear = 0.001
+        cameraNode.camera?.zFar = 100
+        cameraNode.position = SCNVector3(
+            center.x,
+            center.y + maxExtent * 0.15,
+            center.z + maxExtent * 2.3
+        )
+        cameraNode.look(at: center)
+
+        let light = SCNLight()
+        light.type = .omni
+        light.intensity = 1600
+        let lightNode = SCNNode()
+        lightNode.light = light
+        lightNode.position = SCNVector3(
+            center.x + maxExtent * 0.8,
+            center.y + maxExtent * 1.2,
+            center.z + maxExtent * 1.4
+        )
+        cameraNode.addChildNode(lightNode)
+
+        let ambient = SCNLight()
+        ambient.type = .ambient
+        ambient.intensity = 550
+        let ambientNode = SCNNode()
+        ambientNode.light = ambient
+        scene.rootNode.addChildNode(ambientNode)
+
+        return cameraNode
+    }
+
+    private static func aggregateBoundingBox(for node: SCNNode) -> (min: SCNVector3, max: SCNVector3)? {
+        var minX = Float.greatestFiniteMagnitude
+        var minY = Float.greatestFiniteMagnitude
+        var minZ = Float.greatestFiniteMagnitude
+        var maxX = -Float.greatestFiniteMagnitude
+        var maxY = -Float.greatestFiniteMagnitude
+        var maxZ = -Float.greatestFiniteMagnitude
+        var found = false
+
+        func visit(_ current: SCNNode) {
+            if current.geometry != nil {
+                let (localMin, localMax) = current.boundingBox
+                let corners = [
+                    SCNVector3(localMin.x, localMin.y, localMin.z),
+                    SCNVector3(localMin.x, localMin.y, localMax.z),
+                    SCNVector3(localMin.x, localMax.y, localMin.z),
+                    SCNVector3(localMin.x, localMax.y, localMax.z),
+                    SCNVector3(localMax.x, localMin.y, localMin.z),
+                    SCNVector3(localMax.x, localMin.y, localMax.z),
+                    SCNVector3(localMax.x, localMax.y, localMin.z),
+                    SCNVector3(localMax.x, localMax.y, localMax.z)
+                ]
+
+                for corner in corners {
+                    let world = current.convertPosition(corner, to: nil)
+                    minX = min(minX, world.x)
+                    minY = min(minY, world.y)
+                    minZ = min(minZ, world.z)
+                    maxX = max(maxX, world.x)
+                    maxY = max(maxY, world.y)
+                    maxZ = max(maxZ, world.z)
+                    found = true
+                }
+            }
+
+            for child in current.childNodes {
+                visit(child)
+            }
+        }
+
+        visit(node)
+
+        guard found else {
+            return nil
+        }
+
+        return (
+            min: SCNVector3(minX, minY, minZ),
+            max: SCNVector3(maxX, maxY, maxZ)
+        )
     }
 }
 

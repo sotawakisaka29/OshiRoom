@@ -63,7 +63,7 @@ struct HomeView: View {
                 .padding(.bottom, 26)
                 .accessibilityLabel("新しい棚を作成")
             }
-            .navigationTitle("自分の棚一覧")
+            .navigationTitle("My OshiRoom")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -127,9 +127,9 @@ struct HomeView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("OshiRoom")
-                .font(.system(.title, design: .rounded).weight(.bold))
-                .foregroundStyle(AppColors.textPrimary)
+//            Text("OshiRoom")
+//                .font(.system(.title, design: .rounded).weight(.bold))
+//                .foregroundStyle(AppColors.textPrimary)
             Text("飾りきれない推しグッズを、ARの棚に静かに並べましょう。")
                 .font(.callout)
                 .foregroundStyle(AppColors.textSecondary)
@@ -311,6 +311,7 @@ struct EmptyShelfView: View {
 struct ShelfObjectListView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \ScannedModel.updatedAt, order: .reverse) private var scannedModels: [ScannedModel]
     let shelf: Shelf
 
     private var sortedItems: [PlacedItem] {
@@ -325,7 +326,11 @@ struct ShelfObjectListView: View {
                 } else {
                     List {
                         ForEach(Array(sortedItems.enumerated()), id: \.element.id) { index, item in
-                            ShelfObjectRow(item: item, fallbackName: "オブジェクト\(index + 1)")
+                            ShelfObjectRow(
+                                item: item,
+                                fallbackName: "オブジェクト\(index + 1)",
+                                modelThumbnailData: modelThumbnailData(for: item.modelPath)
+                            )
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
                         }
@@ -373,12 +378,21 @@ struct ShelfObjectListView: View {
         shelf.updatedAt = .now
         try? modelContext.save()
     }
+
+    private func modelThumbnailData(for modelPath: String?) -> Data? {
+        guard let modelPath else {
+            return nil
+        }
+
+        return scannedModels.first { $0.modelPath == modelPath }?.previewThumbnailData
+    }
 }
 
 /// グッズ一覧の1行です。
 struct ShelfObjectRow: View {
     @Bindable var item: PlacedItem
     let fallbackName: String
+    let modelThumbnailData: Data?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -424,13 +438,22 @@ struct ShelfObjectRow: View {
     @ViewBuilder
     private var thumbnail: some View {
         if item.contentType == .model3D {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.green.opacity(0.14))
-                .frame(width: 62, height: 62)
-                .overlay {
-                    Image(systemName: "cube")
-                        .foregroundStyle(Color.green)
-                }
+            if let modelThumbnailData,
+               let image = UIImage(data: modelThumbnailData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 62, height: 62)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.green.opacity(0.14))
+                    .frame(width: 62, height: 62)
+                    .overlay {
+                        Image(systemName: "cube")
+                            .foregroundStyle(Color.green)
+                    }
+            }
         } else if let image = ImageStore.load(path: item.imagePath) {
             Image(uiImage: image)
                 .resizable()

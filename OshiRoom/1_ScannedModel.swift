@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import simd
 
 /// 物体スキャンで作成した3Dモデルまたは試験用スキャン記録です。
 @Model
@@ -11,6 +12,8 @@ final class ScannedModel {
     var modelPath: String?
     var captureDirectoryPath: String?
     var thumbnailData: Data?
+    var previewTransformData: Data?
+    var lastOpenedAt: Date?
     var shotCount: Int
     var createdAt: Date
     var updatedAt: Date
@@ -23,6 +26,8 @@ final class ScannedModel {
         modelPath: String? = nil,
         captureDirectoryPath: String? = nil,
         thumbnailData: Data? = nil,
+        previewTransform: TransformSnapshot = .identity,
+        lastOpenedAt: Date? = nil,
         shotCount: Int = 0,
         createdAt: Date = .now,
         updatedAt: Date = .now
@@ -34,6 +39,8 @@ final class ScannedModel {
         self.modelPath = modelPath
         self.captureDirectoryPath = captureDirectoryPath
         self.thumbnailData = thumbnailData
+        self.previewTransformData = try? JSONEncoder().encode(previewTransform)
+        self.lastOpenedAt = lastOpenedAt
         self.shotCount = shotCount
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -47,6 +54,40 @@ final class ScannedModel {
     var status: ScannedModelStatus {
         get { ScannedModelStatus(rawValue: statusRawValue) ?? .captured }
         set { statusRawValue = newValue.rawValue }
+    }
+
+    var previewThumbnailData: Data? {
+        if let thumbnailData {
+            return thumbnailData
+        }
+
+        guard let captureDirectoryPath else {
+            return nil
+        }
+
+        if let captureThumbnail = ScannedModelStore.loadCaptureThumbnailData(relativePath: captureDirectoryPath) {
+            return captureThumbnail
+        }
+
+        guard let modelPath else {
+            return nil
+        }
+
+        return ScannedModelStore.loadModelThumbnailData(relativePath: modelPath)
+    }
+
+    var previewTransformSnapshot: TransformSnapshot {
+        get {
+            guard let previewTransformData,
+                  let snapshot = try? JSONDecoder().decode(TransformSnapshot.self, from: previewTransformData) else {
+                return .identity
+            }
+
+            return snapshot
+        }
+        set {
+            previewTransformData = try? JSONEncoder().encode(newValue)
+        }
     }
 }
 

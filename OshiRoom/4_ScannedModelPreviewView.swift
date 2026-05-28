@@ -2,9 +2,11 @@ import RealityKit
 import SwiftUI
 import UIKit
 
-/// 白背景の非AR空間で3Dモデルをプレビューします。
+/// ライト/ダークに応じた非AR空間で3Dモデルをプレビューします。
 struct ScannedModelPreviewRealityView: UIViewRepresentable {
     let scannedModel: ScannedModel
+    let backgroundColor: UIColor
+    let controller: ScannedModelPreviewController
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -12,20 +14,26 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero, cameraMode: .nonAR, automaticallyConfigureSession: false)
-        arView.environment.background = .color(.white)
+        arView.environment.background = .color(backgroundColor)
 
         let anchor = AnchorEntity(world: .zero)
         let entity = makePreviewEntity()
-        entity.position = [0, 0, -0.7]
+        applyStoredPreviewTransformIfNeeded(to: entity)
         anchor.addChild(entity)
         arView.scene.addAnchor(anchor)
         context.coordinator.previewEntity = entity
         context.coordinator.installGestures(on: arView)
+        controller.previewEntity = entity
+        controller.arView = arView
 
         return arView
     }
 
-    func updateUIView(_ uiView: ARView, context: Context) {}
+    func updateUIView(_ uiView: ARView, context: Context) {
+        uiView.environment.background = .color(backgroundColor)
+        controller.previewEntity = context.coordinator.previewEntity
+        controller.arView = uiView
+    }
 
     private func makePreviewEntity() -> Entity {
         if let modelPath = scannedModel.modelPath,
@@ -52,16 +60,28 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
         return placeholderEntity()
     }
 
+    private func applyStoredPreviewTransformIfNeeded(to entity: Entity) {
+        let snapshot = scannedModel.previewTransformSnapshot
+        if snapshot != .identity {
+            entity.position = snapshot.position
+            entity.orientation = snapshot.quaternion
+            entity.scale = snapshot.scale
+            return
+        }
+
+        entity.position = [0, 0, -0.24]
+    }
+
     private func previewScale(for method: ScanMethod) -> SIMD3<Float> {
         switch method {
         case .lidar:
-            [0.72, 0.72, 0.72]
+            [5.0, 5.0, 5.0]
         case .photogrammetry:
-            [0.48, 0.48, 0.48]
+            [5.0, 5.0, 5.0]
         case .objectCapture:
-            [0.48, 0.48, 0.48]
+            [5.0, 5.0, 5.0]
         case .trueDepth:
-            [1.5, 1.5, 1.5]
+            [6.2, 6.2, 6.2]
         }
     }
 
@@ -91,7 +111,7 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
             root.addChild(box)
         }
 
-        root.scale = [1.2, 1.2, 1.2]
+        root.scale = [4.5, 4.5, 4.5]
         return root
     }
 
@@ -150,7 +170,7 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
             isMetallic: false
         )
         let entity = ModelEntity(mesh: mesh, materials: [material])
-        entity.scale = [0.72, 0.72, 0.72]
+        entity.scale = [5.0, 5.0, 5.0]
         return entity
     }
 
@@ -180,6 +200,7 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
             root.addChild(point)
         }
 
+        root.scale = [5.2, 5.2, 5.2]
         return root
     }
 
@@ -187,7 +208,7 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
         weak var previewEntity: Entity?
         private var baseScale: SIMD3<Float> = .one
         private var baseRotation = simd_quatf(angle: 0, axis: [0, 1, 0])
-        private var basePosition = SIMD3<Float>(0, 0, -0.7)
+        private var basePosition = SIMD3<Float>(0, 0, -0.24)
 
         func installGestures(on arView: ARView) {
             let pinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
@@ -257,14 +278,46 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
         }
 
         private func clampScale(_ scale: SIMD3<Float>) -> SIMD3<Float> {
-            let minScale: Float = 0.08
-            let maxScale: Float = 2.0
+            let minScale: Float = 0.15
+            let maxScale: Float = 18.0
             return [
                 min(max(scale.x, minScale), maxScale),
                 min(max(scale.y, minScale), maxScale),
                 min(max(scale.z, minScale), maxScale)
             ]
         }
+    }
+}
+
+final class ScannedModelPreviewController {
+    weak var arView: ARView?
+    weak var previewEntity: Entity?
+
+    func snapshotCurrentImage() -> UIImage? {
+        guard let arView, arView.bounds.isEmpty == false else {
+            return nil
+        }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: arView.bounds.size, format: format)
+        return renderer.image { _ in
+            arView.drawHierarchy(in: arView.bounds, afterScreenUpdates: true)
+        }
+    }
+
+    func snapshotCurrentTransform() -> TransformSnapshot? {
+        guard let previewEntity else {
+            return nil
+        }
+
+        return TransformSnapshot(
+            position: previewEntity.position,
+            rotation: previewEntity.orientation,
+            scale: previewEntity.scale
+        )
     }
 }
 
