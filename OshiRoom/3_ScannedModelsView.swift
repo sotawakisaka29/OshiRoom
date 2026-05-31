@@ -4,8 +4,15 @@ import UIKit
 
 /// スキャン済み3Dモデルの一覧画面です。
 struct ScannedModelsView: View {
+	@Environment(\.modelContext) private var modelContext
 	@Query private var models: [ScannedModel]
 	@State private var selectedModel: ScannedModel?
+	@State private var inlineEditingModelID: ScannedModel.ID?
+	@State private var inlineEditedModelName = ""
+	@State private var inlineOriginalModelName = ""
+	@State private var deleteTargetModel: ScannedModel?
+	@State private var isShowingDeleteAlert = false
+	@FocusState private var focusedEditingModelID: ScannedModel.ID?
 	@State private var isShowingModelScanner = false
 	@State private var sortOption: ScannedModelSortOption = .addedDate
 	@State private var sortDirection: ScannedModelSortDirection = .descending
@@ -19,31 +26,7 @@ struct ScannedModelsView: View {
 			} else {
 				List {
 					ForEach(displayedModels) { model in
-						Button {
-							selectedModel = model
-						} label: {
-							HStack(spacing: 16) {
-								thumbnail(for: model)
-
-								VStack(alignment: .leading, spacing: 5) {
-									Text(model.name)
-										.font(.headline)
-										.foregroundStyle(AppColors.textPrimary)
-									Text(model.updatedAt.formatted(date: .abbreviated, time: .shortened))
-										.font(.caption)
-										.foregroundStyle(AppColors.textMuted)
-								}
-
-								Spacer()
-
-								Image(systemName: "chevron.right")
-									.font(.footnote.weight(.semibold))
-									.foregroundStyle(AppColors.textMuted)
-							}
-							.frame(maxWidth: .infinity, minHeight: 104, alignment: .center)
-							.padding(.vertical, 12)
-						}
-						.buttonStyle(.plain)
+						row(for: model)
 						.listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
 					}
 				}
@@ -87,6 +70,177 @@ struct ScannedModelsView: View {
 		.navigationDestination(item: $selectedModel) { model in
 			ScannedModelPreviewView(model: model)
 		}
+		.alert("3Dモデルを削除", isPresented: $isShowingDeleteAlert, presenting: deleteTargetModel) { model in
+			Button("削除", role: .destructive) {
+				deleteModel(model)
+			}
+			Button("キャンセル", role: .cancel) {
+				deleteTargetModel = nil
+			}
+		} message: { model in
+			Text("「\(model.name)」を削除します。この操作は元に戻せません。")
+		}
+		.onChange(of: focusedEditingModelID) { _, newValue in
+			if let editingID = inlineEditingModelID, newValue != editingID {
+				commitInlineEdit()
+			}
+		}
+	}
+
+	@ViewBuilder
+	private func row(for model: ScannedModel) -> some View {
+		Group {
+			if inlineEditingModelID == model.id {
+				editingRow(for: model)
+			} else {
+				Button {
+					selectedModel = model
+				} label: {
+					normalRowContent(for: model)
+				}
+				.buttonStyle(.plain)
+			}
+		}
+		.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+			Button(role: .destructive) {
+				requestDelete(model)
+			} label: {
+				Label("削除", systemImage: "trash")
+			}
+		}
+	}
+
+	@ViewBuilder
+	private func normalRowContent(for model: ScannedModel) -> some View {
+		HStack(spacing: 16) {
+			thumbnail(for: model)
+
+			VStack(alignment: .leading, spacing: 5) {
+				Text(model.name)
+					.font(.headline)
+					.foregroundStyle(AppColors.textPrimary)
+					.onLongPressGesture {
+						beginInlineEditing(model)
+					}
+				Text(model.updatedAt.formatted(date: .abbreviated, time: .shortened))
+					.font(.caption)
+					.foregroundStyle(AppColors.textMuted)
+			}
+
+			Spacer()
+
+			Image(systemName: "chevron.right")
+				.font(.footnote.weight(.semibold))
+				.foregroundStyle(AppColors.textMuted)
+		}
+		.frame(maxWidth: .infinity, minHeight: 104, alignment: .center)
+		.padding(.vertical, 12)
+	}
+
+	@ViewBuilder
+	private func editingRow(for model: ScannedModel) -> some View {
+		HStack(spacing: 16) {
+			thumbnail(for: model)
+
+			VStack(alignment: .leading, spacing: 5) {
+				TextField("モデル名", text: $inlineEditedModelName)
+					.font(.headline)
+					.foregroundStyle(AppColors.textPrimary)
+					.textFieldStyle(.plain)
+					.textInputAutocapitalization(.never)
+					.autocorrectionDisabled()
+					.focused($focusedEditingModelID, equals: model.id)
+					.onAppear {
+						focusedEditingModelID = model.id
+					}
+					.onSubmit {
+						commitInlineEdit()
+					}
+					.padding(.vertical, 2)
+					.padding(.horizontal, 8)
+					.background(AppColors.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+					.overlay(
+						RoundedRectangle(cornerRadius: 10, style: .continuous)
+							.stroke(AppColors.separator, lineWidth: 1)
+					)
+					.padding(.trailing, 16)
+
+				Text(model.updatedAt.formatted(date: .abbreviated, time: .shortened))
+					.font(.caption)
+					.foregroundStyle(AppColors.textMuted)
+			}
+
+			Spacer()
+
+			Image(systemName: "chevron.right")
+				.font(.footnote.weight(.semibold))
+				.foregroundStyle(AppColors.textMuted)
+		}
+		.frame(maxWidth: .infinity, minHeight: 104, alignment: .center)
+		.padding(.vertical, 12)
+	}
+
+	private func beginInlineEditing(_ model: ScannedModel) {
+		inlineEditingModelID = model.id
+		inlineEditedModelName = model.name
+		inlineOriginalModelName = model.name
+		focusedEditingModelID = model.id
+	}
+
+	private func commitInlineEdit() {
+		guard let editingID = inlineEditingModelID,
+		      let model = models.first(where: { $0.id == editingID }) else {
+			clearInlineEditingState()
+			return
+		}
+
+		let trimmed = inlineEditedModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+		let nextName = trimmed.isEmpty ? inlineOriginalModelName : trimmed
+
+		if model.name != nextName {
+			model.name = nextName
+			model.updatedAt = .now
+			try? modelContext.save()
+		}
+
+		clearInlineEditingState()
+	}
+
+	private func requestDelete(_ model: ScannedModel) {
+		commitInlineEdit()
+		deleteTargetModel = model
+		isShowingDeleteAlert = true
+	}
+
+	private func deleteModel(_ model: ScannedModel) {
+		if selectedModel?.id == model.id {
+			selectedModel = nil
+		}
+
+		if inlineEditingModelID == model.id {
+			clearInlineEditingState()
+		}
+
+		if let modelPath = model.modelPath {
+			try? ScannedModelStore.delete(relativePath: modelPath)
+		}
+
+		if let captureDirectoryPath = model.captureDirectoryPath {
+			try? ScannedModelStore.delete(relativePath: captureDirectoryPath)
+		}
+
+		modelContext.delete(model)
+		try? modelContext.save()
+
+		deleteTargetModel = nil
+		isShowingDeleteAlert = false
+	}
+
+	private func clearInlineEditingState() {
+		inlineEditingModelID = nil
+		inlineEditedModelName = ""
+		inlineOriginalModelName = ""
+		focusedEditingModelID = nil
 	}
 
 	private func sortedModels() -> [ScannedModel] {
