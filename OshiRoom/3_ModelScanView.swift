@@ -330,7 +330,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
 
 		isProcessing = true
 		progressText = ""
-		statusMessage = "ObjectCapture画像からUSDZ生成を開始します。"
+		statusMessage = "3Dモデルを作成しています"
 
 		Task {
 			await processObjectCapturePhotogrammetry(

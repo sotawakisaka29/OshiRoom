@@ -9,7 +9,9 @@ struct OshiRoomApp: App {
         let configuration = ModelConfiguration(schema: schema)
 
         do {
-            return try ModelContainer(for: schema, configurations: [configuration])
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            repairShelfDisplayOrderIfNeeded(in: container.mainContext)
+            return container
         } catch {
             // SwiftDataの移行失敗などで起動不能になるより、まずアプリを開けることを優先します。
             let fallbackConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -25,5 +27,33 @@ struct OshiRoomApp: App {
             ContentView()
         }
         .modelContainer(modelContainer)
+    }
+
+    private static func repairShelfDisplayOrderIfNeeded(in modelContext: ModelContext) {
+        let descriptor = FetchDescriptor<Shelf>(
+            sortBy: [
+                SortDescriptor(\Shelf.displayOrder, order: .forward),
+                SortDescriptor(\Shelf.updatedAt, order: .reverse)
+            ]
+        )
+
+        guard let shelves = try? modelContext.fetch(descriptor),
+              shelves.isEmpty == false else {
+            return
+        }
+
+        let needsRepair = shelves.enumerated().contains { index, shelf in
+            shelf.displayOrder != index
+        }
+
+        guard needsRepair else {
+            return
+        }
+
+        for (index, shelf) in shelves.enumerated() {
+            shelf.displayOrder = index
+        }
+
+        try? modelContext.save()
     }
 }

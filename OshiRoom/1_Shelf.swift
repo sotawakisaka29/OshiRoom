@@ -8,6 +8,7 @@ final class Shelf {
     var name: String
     var templateRawValue: String
     var thumbnailData: Data?
+    var displayOrder: Int = 0
     var createdAt: Date
     var updatedAt: Date
     var anchorTransformData: Data?
@@ -20,6 +21,7 @@ final class Shelf {
         name: String,
         template: ShelfTemplate,
         thumbnailData: Data? = nil,
+        displayOrder: Int = 0,
         createdAt: Date = .now,
         updatedAt: Date = .now,
         anchorTransformData: Data? = nil,
@@ -29,6 +31,7 @@ final class Shelf {
         self.name = name
         self.templateRawValue = template.rawValue
         self.thumbnailData = thumbnailData
+        self.displayOrder = displayOrder
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.anchorTransformData = anchorTransformData

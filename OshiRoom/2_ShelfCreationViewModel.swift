@@ -21,7 +21,11 @@ final class ShelfCreationViewModel {
             return nil
         }
 
-        let shelf = Shelf(name: trimmedName, template: selectedTemplate)
+        let shelf = Shelf(
+            name: trimmedName,
+            template: selectedTemplate,
+            displayOrder: nextDisplayOrder(in: modelContext)
+        )
         modelContext.insert(shelf)
 
         do {
@@ -31,5 +35,11 @@ final class ShelfCreationViewModel {
             validationMessage = "保存に失敗しました。もう一度試してください。"
             return nil
         }
+    }
+
+    private func nextDisplayOrder(in modelContext: ModelContext) -> Int {
+        let descriptor = FetchDescriptor<Shelf>(sortBy: [SortDescriptor(\Shelf.displayOrder, order: .reverse)])
+        let shelves = (try? modelContext.fetch(descriptor)) ?? []
+        return (shelves.first?.displayOrder ?? -1) + 1
     }
 }

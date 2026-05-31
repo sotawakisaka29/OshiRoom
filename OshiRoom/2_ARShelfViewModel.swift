@@ -50,7 +50,7 @@ final class ARShelfViewModel {
         pendingGoods = PendingGoods(item: item, content: .image(image))
         mode = .goodsEdit
         selectedTarget = ARShelfSelectionTarget.item(item.id)
-        statusMessage = "グッズを棚へ配置しました。編集モードで位置を調整できます。"
+        statusMessage = "グッズを棚へ配置しました"
     }
 
     func queueModel(_ model: ScannedModel, modelContext: ModelContext) {
@@ -80,7 +80,7 @@ final class ARShelfViewModel {
         pendingGoods = PendingGoods(item: item, content: .model3D(modelPath))
         mode = .goodsEdit
         selectedTarget = ARShelfSelectionTarget.item(item.id)
-        statusMessage = "3Dモデルを棚へ配置しました。グッズ編集モードで位置を調整できます。"
+        statusMessage = "3Dモデルを棚へ配置しました"
     }
 
     func selectItem(id: UUID?) {
@@ -267,9 +267,9 @@ enum ARInteractionMode: String, CaseIterable, Identifiable {
         case .placement:
             "床を映して、置きたい場所をタップしてください。"
         case .shelfEdit:
-            "棚編集モードです。棚のみ選択できます。"
+            "棚のみ選択できます。"
         case .goodsEdit:
-            "グッズ編集モードです。グッズのみ選択できます。"
+            "グッズのみ選択できます。"
         }
     }
 }

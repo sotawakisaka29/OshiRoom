@@ -336,7 +336,7 @@ extension ScannedModelsView {
 			Text("まだ3Dモデルがありません")
 				.font(.headline)
 				.foregroundStyle(AppColors.textPrimary)
-			Text("3Dモデル一覧の右上のカメラからLiDARまたはフォトグラメトリの試験スキャンを開始できます。")
+			Text("さっそく右上のカメラから\n3Dモデルをスキャンしましょう")
 				.font(.subheadline)
 				.foregroundStyle(AppColors.textSecondary)
 				.multilineTextAlignment(.center)

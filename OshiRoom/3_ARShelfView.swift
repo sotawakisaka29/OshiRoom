@@ -23,6 +23,24 @@ struct ARShelfView: View {
         .navigationTitle(viewModel.shelf.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(isInterfaceHidden ? .hidden : .visible, for: .navigationBar)
+        .toolbar {
+            if isInterfaceHidden == false {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        isInterfaceHidden = true
+                        viewModel.statusMessage = "UIを非表示にしました。オブジェクト以外をタップすると再表示できます。"
+                    } label: {
+                        Image(systemName: "eye.slash")
+                    }
+
+                    Button {
+                        viewModel.requestSave()
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                }
+            }
+        }
         .toolbar(.hidden, for: .tabBar)
     }
 
@@ -98,12 +116,6 @@ struct ARShelfView: View {
                     }
 
                     Button {
-                        viewModel.requestSave()
-                    } label: {
-                        BottomMenuItem(title: "保存", symbolName: "square.and.arrow.down")
-                    }
-
-                    Button {
                         viewModel.requestDeleteSelected()
                     } label: {
                         BottomMenuItem(
@@ -115,12 +127,6 @@ struct ARShelfView: View {
                     .disabled(viewModel.selectedItemID == nil)
                     .opacity(viewModel.selectedItemID == nil ? 0.55 : 1)
 
-                    Button {
-                        isInterfaceHidden = true
-                        viewModel.statusMessage = "UIを非表示にしました。オブジェクト以外をタップすると再表示できます。"
-                    } label: {
-                        BottomMenuItem(title: "非表示", symbolName: "eye.slash")
-                    }
                 }
             }
             .padding(10)
@@ -149,7 +155,7 @@ struct StatusCapsule: View {
 
     var body: some View {
         Text(message)
-            .font(.footnote.weight(.medium))
+            .font(.caption.weight(.medium))
             .foregroundStyle(AppColors.textPrimary)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 16)
