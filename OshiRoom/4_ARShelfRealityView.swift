@@ -26,35 +26,44 @@ struct ARShelfRealityView: UIViewRepresentable {
 
     func updateUIView(_ uiView: ARView, context: Context) {
         context.coordinator.viewModel = viewModel
+        context.coordinator.modelContext = modelContext
         context.coordinator.isInterfaceHidden = isInterfaceHidden
         context.coordinator.onRequestShowInterface = onRequestShowInterface
         context.coordinator.updateMode(viewModel.mode)
-        context.coordinator.restoreShelfIfNeeded(in: uiView)
+        context.coordinator.syncShelvesIfNeeded(in: uiView)
         context.coordinator.consumePendingGoodsIfNeeded()
         context.coordinator.deleteIfNeeded(modelContext: modelContext)
         context.coordinator.saveIfNeeded(modelContext: modelContext)
     }
 
+    static func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
+        coordinator.persistBeforeDismiss()
+    }
+
     final class Coordinator: NSObject {
         var viewModel: ARShelfViewModel
+        var modelContext: ModelContext?
         var isInterfaceHidden: Bool
         var onRequestShowInterface: () -> Void
         private weak var arView: ARView?
-        private var anchorEntity: AnchorEntity?
-        private var shelfEntity: ModelEntity?
+        private var anchorEntities: [UUID: AnchorEntity] = [:]
+        private var shelfEntities: [UUID: ModelEntity] = [:]
         private var itemEntities: [UUID: ModelEntity] = [:]
         private var itemCollisionSizes: [UUID: SIMD3<Float>] = [:]
         private var itemCollisionCenters: [UUID: SIMD3<Float>] = [:]
-        private var shelfGestureRecognizers: [EntityGestureRecognizer] = []
+        private var shelfGestureRecognizers: [UUID: [EntityGestureRecognizer]] = [:]
         private var itemGestureRecognizers: [UUID: [EntityGestureRecognizer]] = [:]
         private var heightPanGesture: UIPanGestureRecognizer?
+        private var rotationPanGesture: UIPanGestureRecognizer?
+        private var goodsPinchGesture: UIPinchGestureRecognizer?
         private var heightPanStartY: Float = 0
+        private var rotationPanStartOrientation: simd_quatf?
+        private var goodsPinchStartScale: SIMD3<Float>?
         private var selectionOutline: Entity?
         private var outlinedTarget: ARShelfSelectionTarget?
         private var handledPendingGoodsID: UUID?
         private var handledSaveRequestToken = 0
         private var handledDeleteRequestToken = 0
-        private var hasRestoredShelf = false
 
         init(
             viewModel: ARShelfViewModel,
@@ -85,6 +94,17 @@ struct ARShelfRealityView: UIViewRepresentable {
             heightPanGesture.isEnabled = false
             arView.addGestureRecognizer(heightPanGesture)
             self.heightPanGesture = heightPanGesture
+
+            let rotationPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleRotationPan(_:)))
+            rotationPanGesture.maximumNumberOfTouches = 1
+            rotationPanGesture.isEnabled = false
+            arView.addGestureRecognizer(rotationPanGesture)
+            self.rotationPanGesture = rotationPanGesture
+
+            let goodsPinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(handleGoodsPinch(_:)))
+            goodsPinchGesture.isEnabled = false
+            arView.addGestureRecognizer(goodsPinchGesture)
+            self.goodsPinchGesture = goodsPinchGesture
             return arView
         }
 
@@ -94,19 +114,16 @@ struct ARShelfRealityView: UIViewRepresentable {
             updateSelectionOutline()
         }
 
-        func restoreShelfIfNeeded(in arView: ARView) {
-            guard hasRestoredShelf == false else {
-                return
-            }
-            hasRestoredShelf = true
+        func syncShelvesIfNeeded(in arView: ARView) {
+            for shelf in viewModel.sortedShelves {
+                guard shelfEntities[shelf.id] == nil,
+                      let matrix = MatrixCoder.decode(shelf.anchorTransformData) else {
+                    continue
+                }
 
-            guard let matrix = MatrixCoder.decode(viewModel.shelf.anchorTransformData) else {
-                return
+                placeShelf(shelf, with: matrix, in: arView)
+                restoreSavedItems(for: shelf)
             }
-
-            placeShelf(with: matrix, in: arView)
-            restoreSavedItems()
-            viewModel.statusMessage = "保存済みの棚を復元しました。"
         }
 
         func saveIfNeeded(modelContext: ModelContext) {
@@ -116,7 +133,17 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             handledSaveRequestToken = viewModel.saveRequestToken
             syncTransformsToModel()
-            syncShelfTransformToModel()
+            syncShelfTransformsToModel()
+            _ = viewModel.save(modelContext: modelContext)
+        }
+
+        func persistBeforeDismiss() {
+            guard let modelContext else {
+                return
+            }
+
+            syncTransformsToModel()
+            syncShelfTransformsToModel()
             _ = viewModel.save(modelContext: modelContext)
         }
 
@@ -126,21 +153,55 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
 
             handledDeleteRequestToken = viewModel.deleteRequestToken
-            guard let selectedItemID = viewModel.selectedItemID else {
-                viewModel.statusMessage = "先に削除したいグッズをタップして選択してください。"
+            if let selectedItemID = viewModel.selectedItemID {
+                deleteSelectedItemEntity(itemID: selectedItemID)
+                clearSelectionOutline()
+                syncTransformsToModel()
+                _ = viewModel.deleteSelected(modelContext: modelContext)
+                updateGestureAvailability()
                 return
             }
 
-            itemEntities[selectedItemID]?.removeFromParent()
-            itemEntities[selectedItemID] = nil
-            itemCollisionSizes[selectedItemID] = nil
-            itemCollisionCenters[selectedItemID] = nil
-            itemGestureRecognizers[selectedItemID]?.forEach { $0.isEnabled = false }
-            itemGestureRecognizers[selectedItemID] = nil
-            clearSelectionOutline()
-            syncTransformsToModel()
-            _ = viewModel.deleteSelected(modelContext: modelContext)
-            updateGestureAvailability()
+            if let selectedShelf = viewModel.selectedShelf {
+                deleteSelectedShelfEntity(selectedShelf)
+                clearSelectionOutline()
+                syncShelfTransformsToModel()
+                _ = viewModel.deleteSelected(modelContext: modelContext)
+                updateCollisionAvailability()
+                updateGestureAvailability()
+                return
+            }
+
+            viewModel.statusMessage = viewModel.mode == .shelfEdit
+                ? "先に削除したい棚をタップして選択してください。"
+                : "先に削除したいグッズをタップして選択してください。"
+        }
+
+        private func deleteSelectedItemEntity(itemID: UUID) {
+            itemEntities[itemID]?.removeFromParent()
+            itemEntities[itemID] = nil
+            itemCollisionSizes[itemID] = nil
+            itemCollisionCenters[itemID] = nil
+            itemGestureRecognizers[itemID]?.forEach { $0.isEnabled = false }
+            itemGestureRecognizers[itemID] = nil
+        }
+
+        private func deleteSelectedShelfEntity(_ shelf: Shelf) {
+            let imagePaths = shelf.items
+                .filter { $0.contentType == .image && $0.imagePath.isEmpty == false }
+                .map(\.imagePath)
+
+            for item in shelf.items {
+                deleteSelectedItemEntity(itemID: item.id)
+            }
+
+            shelfGestureRecognizers[shelf.id]?.forEach { $0.isEnabled = false }
+            shelfGestureRecognizers[shelf.id] = nil
+            shelfEntities[shelf.id]?.removeFromParent()
+            shelfEntities[shelf.id] = nil
+            anchorEntities[shelf.id]?.removeFromParent()
+            anchorEntities[shelf.id] = nil
+            imagePaths.forEach { ImageStore.delete(path: $0) }
         }
 
         func consumePendingGoodsIfNeeded() {
@@ -152,17 +213,18 @@ struct ARShelfRealityView: UIViewRepresentable {
                 return
             }
 
-            guard shelfEntity != nil else {
-                viewModel.statusMessage = "先に床をタップして棚を配置してください。"
+            guard let shelfID = pendingGoods.item.shelf?.id,
+                  let shelfEntity = shelfEntities[shelfID] else {
+                viewModel.statusMessage = "先にグッズを置きたい棚を選択してください。"
                 return
             }
 
             handledPendingGoodsID = pendingGoods.item.id
             switch pendingGoods.content {
             case .image(let image):
-                addImageItemEntity(for: pendingGoods.item, image: image, installGestures: true)
+                addImageItemEntity(for: pendingGoods.item, image: image, to: shelfEntity, installGestures: true)
             case .model3D(let modelPath):
-                addModelItemEntity(for: pendingGoods.item, modelPath: modelPath, installGestures: true)
+                addModelItemEntity(for: pendingGoods.item, modelPath: modelPath, to: shelfEntity, installGestures: true)
             }
             viewModel.pendingGoods = nil
             updateGestureAvailability()
@@ -180,27 +242,26 @@ struct ARShelfRealityView: UIViewRepresentable {
                 return
             }
 
-            if shelfEntity != nil {
+            if let pendingShelf = viewModel.pendingShelf {
+                guard let result = arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first else {
+                    viewModel.statusMessage = "床がまだ見つかっていません。ゆっくり部屋を映してください。"
+                    return
+                }
+
+                placeShelf(pendingShelf, with: result.worldTransform, in: arView)
+                pendingShelf.anchorTransformData = MatrixCoder.encode(result.worldTransform)
+                pendingShelf.updatedAt = .now
+                viewModel.room.updatedAt = .now
+                viewModel.completePendingShelfPlacement(for: pendingShelf.id)
+                updateCollisionAvailability()
+                updateGestureAvailability()
+                updateSelectionOutline()
+                return
+            }
+
+            if shelfEntities.isEmpty == false {
                 selectObject(at: point, in: arView)
-                return
             }
-
-            guard viewModel.mode == .placement else {
-                return
-            }
-
-            guard let result = arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first else {
-                viewModel.statusMessage = "床がまだ見つかっていません。ゆっくり部屋を映してください。"
-                return
-            }
-
-            placeShelf(with: result.worldTransform, in: arView)
-            viewModel.shelf.anchorTransformData = MatrixCoder.encode(result.worldTransform)
-            viewModel.switchMode(.shelfEdit)
-            viewModel.selectShelf()
-            updateCollisionAvailability()
-            updateGestureAvailability()
-            updateSelectionOutline()
         }
 
         @objc private func handleHeightPan(_ gesture: UIPanGestureRecognizer) {
@@ -222,11 +283,62 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
         }
 
+        @objc private func handleRotationPan(_ gesture: UIPanGestureRecognizer) {
+            guard let targetEntity = rotationAdjustmentTargetEntity() else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                rotationPanStartOrientation = targetEntity.orientation
+            case .changed:
+                guard let startOrientation = rotationPanStartOrientation else {
+                    return
+                }
+
+                let translation = gesture.translation(in: gesture.view)
+                let yaw = simd_quatf(angle: Float(translation.x) * 0.01, axis: SIMD3<Float>(0, 1, 0))
+                let pitch = simd_quatf(angle: Float(translation.y) * 0.01, axis: SIMD3<Float>(1, 0, 0))
+                targetEntity.orientation = simd_normalize(yaw * pitch * startOrientation)
+            case .ended, .cancelled, .failed:
+                rotationPanStartOrientation = nil
+                syncRotationAdjustedTargetToModel()
+            default:
+                break
+            }
+        }
+
+        @objc private func handleGoodsPinch(_ gesture: UIPinchGestureRecognizer) {
+            guard let selectedItemID = viewModel.selectedItemID,
+                  let targetEntity = itemEntities[selectedItemID],
+                  viewModel.mode == .goodsEdit,
+                  viewModel.goodsMoveMode == .horizontalPlane else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                goodsPinchStartScale = targetEntity.scale
+            case .changed:
+                guard let startScale = goodsPinchStartScale else {
+                    return
+                }
+
+                let nextScale = simd_clamp(startScale * Float(gesture.scale), SIMD3<Float>(repeating: 0.2), SIMD3<Float>(repeating: 4.0))
+                targetEntity.scale = nextScale
+            case .ended, .cancelled, .failed:
+                goodsPinchStartScale = nil
+                syncTransformsToModel()
+            default:
+                break
+            }
+        }
+
         private func heightAdjustmentTargetEntity() -> ModelEntity? {
             if viewModel.mode == .shelfEdit,
                viewModel.shelfMoveMode == .height,
-               viewModel.selectedTarget == ARShelfSelectionTarget.shelf {
-                return shelfEntity
+               let selectedShelfID = viewModel.selectedShelfID {
+                return shelfEntities[selectedShelfID]
             }
 
             if viewModel.mode == .goodsEdit,
@@ -238,9 +350,33 @@ struct ARShelfRealityView: UIViewRepresentable {
             return nil
         }
 
+        private func rotationAdjustmentTargetEntity() -> ModelEntity? {
+            if viewModel.mode == .shelfEdit,
+               viewModel.shelfMoveMode == .rotation,
+               let selectedShelfID = viewModel.selectedShelfID {
+                return shelfEntities[selectedShelfID]
+            }
+
+            if viewModel.mode == .goodsEdit,
+               viewModel.goodsMoveMode == .rotation,
+               let selectedItemID = viewModel.selectedItemID {
+                return itemEntities[selectedItemID]
+            }
+
+            return nil
+        }
+
         private func syncHeightAdjustedTargetToModel() {
             if viewModel.mode == .shelfEdit {
-                syncShelfTransformToModel()
+                syncShelfTransformsToModel()
+            } else if viewModel.mode == .goodsEdit {
+                syncTransformsToModel()
+            }
+        }
+
+        private func syncRotationAdjustedTargetToModel() {
+            if viewModel.mode == .shelfEdit {
+                syncShelfTransformsToModel()
             } else if viewModel.mode == .goodsEdit {
                 syncTransformsToModel()
             }
@@ -256,8 +392,8 @@ struct ARShelfRealityView: UIViewRepresentable {
                 return
             }
 
-            if viewModel.mode == .shelfEdit, isShelfHit(hitEntity) {
-                viewModel.selectShelf()
+            if viewModel.mode == .shelfEdit, let shelfID = shelfID(for: hitEntity) {
+                viewModel.selectShelf(id: shelfID)
                 updateGestureAvailability()
                 updateSelectionOutline()
                 return
@@ -268,47 +404,59 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
 
             if viewModel.selectedTarget != nil {
-                viewModel.selectItem(id: nil)
+                switch viewModel.mode {
+                case .goodsEdit:
+                    viewModel.selectItem(id: nil)
+                case .shelfEdit:
+                    viewModel.selectShelf(id: nil)
+                case .placement:
+                    break
+                }
                 updateGestureAvailability()
                 updateSelectionOutline()
             }
         }
 
-        private func placeShelf(with transform: simd_float4x4, in arView: ARView) {
+        private func placeShelf(_ shelf: Shelf, with transform: simd_float4x4, in arView: ARView) {
             let anchor = AnchorEntity(world: transform)
-            let shelf = ShelfEntityFactory.makeShelf(template: viewModel.shelf.template)
-            anchor.addChild(shelf)
+            let shelfEntity = ShelfEntityFactory.makeShelf(template: shelf.template)
+            shelfEntity.name = shelf.id.uuidString
+            anchor.addChild(shelfEntity)
             arView.scene.addAnchor(anchor)
-            anchorEntity = anchor
-            shelfEntity = shelf
-            shelfGestureRecognizers = arView.installGestures([.translation, .rotation, .scale], for: shelf)
+            anchorEntities[shelf.id] = anchor
+            shelfEntities[shelf.id] = shelfEntity
+            shelfGestureRecognizers[shelf.id] = arView.installGestures([.translation, .rotation, .scale], for: shelfEntity)
             updateGestureAvailability()
         }
 
-        private func restoreSavedItems() {
-            for item in viewModel.sortedItems {
+        private func restoreSavedItems(for shelf: Shelf) {
+            guard let shelfEntity = shelfEntities[shelf.id] else {
+                return
+            }
+
+            for item in shelf.items.sorted(by: { $0.slotIndex < $1.slotIndex }) {
+                guard itemEntities[item.id] == nil else {
+                    continue
+                }
+
                 switch item.contentType {
                 case .image:
                     guard let image = ImageStore.load(path: item.imagePath) else {
                         continue
                     }
 
-                    addImageItemEntity(for: item, image: image, installGestures: true)
+                    addImageItemEntity(for: item, image: image, to: shelfEntity, installGestures: true)
                 case .model3D:
                     guard let modelPath = item.modelPath else {
                         continue
                     }
 
-                    addModelItemEntity(for: item, modelPath: modelPath, installGestures: true)
+                    addModelItemEntity(for: item, modelPath: modelPath, to: shelfEntity, installGestures: true)
                 }
             }
         }
 
-        private func addImageItemEntity(for item: PlacedItem, image: UIImage, installGestures: Bool) {
-            guard let shelfEntity else {
-                return
-            }
-
+        private func addImageItemEntity(for item: PlacedItem, image: UIImage, to shelfEntity: ModelEntity, installGestures: Bool) {
             let entity = GoodsEntityFactory.makeGoodsEntity(image: image, cacheKey: item.imagePath)
             let collisionSize = GoodsEntityFactory.size(for: image)
             let snapshot = item.transformSnapshot
@@ -328,9 +476,8 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
         }
 
-        private func addModelItemEntity(for item: PlacedItem, modelPath: String, installGestures: Bool) {
-            guard let shelfEntity,
-                  let modelURL = ScannedModelStore.url(forRelativePath: modelPath),
+        private func addModelItemEntity(for item: PlacedItem, modelPath: String, to shelfEntity: ModelEntity, installGestures: Bool) {
+            guard let modelURL = ScannedModelStore.url(forRelativePath: modelPath),
                   let modelGoods = ModelGoodsEntityFactory.makeModelEntity(url: modelURL) else {
                 viewModel.statusMessage = "3Dモデルを読み込めませんでした。"
                 return
@@ -368,42 +515,58 @@ struct ARShelfRealityView: UIViewRepresentable {
             return nil
         }
 
-        private func isShelfHit(_ entity: Entity?) -> Bool {
-            guard let shelfEntity else {
-                return false
-            }
-
+        private func shelfID(for entity: Entity?) -> UUID? {
             var currentEntity = entity
 
             while let entity = currentEntity {
-                if entity === shelfEntity {
-                    return true
+                if let shelfID = UUID(uuidString: entity.name), shelfEntities[shelfID] != nil {
+                    return shelfID
                 }
 
                 currentEntity = entity.parent
             }
 
-            return false
+            return nil
         }
 
         private func updateGestureAvailability() {
-            let isShelfSelected = viewModel.mode == .shelfEdit
-                && viewModel.selectedTarget == ARShelfSelectionTarget.shelf
-            let isShelfHeightAdjustment = isShelfSelected && viewModel.shelfMoveMode == .height
+            let selectedShelfID = viewModel.selectedShelfID
+            let isShelfHeightAdjustment = viewModel.mode == .shelfEdit
+                && viewModel.shelfMoveMode == .height
+                && selectedShelfID != nil
+            let isShelfRotationAdjustment = viewModel.mode == .shelfEdit
+                && viewModel.shelfMoveMode == .rotation
+                && selectedShelfID != nil
             let isGoodsHeightAdjustment = viewModel.mode == .goodsEdit
                 && viewModel.goodsMoveMode == .height
                 && viewModel.selectedItemID != nil
+            let isGoodsRotationAdjustment = viewModel.mode == .goodsEdit
+                && viewModel.goodsMoveMode == .rotation
+                && viewModel.selectedItemID != nil
+            let isGlobalGoodsPinchEnabled = viewModel.mode == .goodsEdit
+                && viewModel.goodsMoveMode == .horizontalPlane
+                && viewModel.selectedItemID != nil
 
-            shelfGestureRecognizers.forEach { recognizer in
-                recognizer.isEnabled = isShelfSelected && isShelfHeightAdjustment == false
+            for (shelfID, recognizers) in shelfGestureRecognizers {
+                let isSelectedShelf = viewModel.mode == .shelfEdit
+                    && viewModel.selectedTarget == .shelf(shelfID)
+                recognizers.forEach { recognizer in
+                    recognizer.isEnabled = isSelectedShelf
+                        && isShelfHeightAdjustment == false
+                        && isShelfRotationAdjustment == false
+                }
             }
             heightPanGesture?.isEnabled = isShelfHeightAdjustment || isGoodsHeightAdjustment
+            rotationPanGesture?.isEnabled = isShelfRotationAdjustment || isGoodsRotationAdjustment
+            goodsPinchGesture?.isEnabled = isGlobalGoodsPinchEnabled
 
             for (itemID, recognizers) in itemGestureRecognizers {
                 let isSelectedItem = viewModel.mode == .goodsEdit
                     && viewModel.selectedTarget == ARShelfSelectionTarget.item(itemID)
                 recognizers.forEach { recognizer in
-                    recognizer.isEnabled = isSelectedItem && isGoodsHeightAdjustment == false
+                    recognizer.isEnabled = isSelectedItem
+                        && isGoodsHeightAdjustment == false
+                        && isGoodsRotationAdjustment == false
                 }
             }
         }
@@ -422,11 +585,9 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         private func setShelfCollisionEnabled(_ isEnabled: Bool) {
-            guard let shelfEntity else {
-                return
+            for entity in shelfEntities.values {
+                setCollision(on: entity, isEnabled: isEnabled, size: ShelfEntityFactory.collisionSize)
             }
-
-            setCollision(on: shelfEntity, isEnabled: isEnabled, size: ShelfEntityFactory.collisionSize)
         }
 
         private func setCollision(
@@ -454,8 +615,8 @@ struct ARShelfRealityView: UIViewRepresentable {
             clearSelectionOutline()
 
             switch viewModel.selectedTarget {
-            case .some(ARShelfSelectionTarget.shelf):
-                guard let shelfEntity else {
+            case let .some(.shelf(shelfID)):
+                guard let shelfEntity = shelfEntities[shelfID] else {
                     return
                 }
 
@@ -466,10 +627,10 @@ struct ARShelfRealityView: UIViewRepresentable {
                 )
                 shelfEntity.addChild(outline)
                 selectionOutline = outline
-                outlinedTarget = ARShelfSelectionTarget.shelf
-            case let .some(ARShelfSelectionTarget.item(itemID)):
+                outlinedTarget = .shelf(shelfID)
+            case let .some(.item(itemID)):
                 guard let itemEntity = itemEntities[itemID],
-                      let item = viewModel.shelf.items.first(where: { $0.id == itemID }) else {
+                      let item = viewModel.selectedItem ?? viewModel.room.shelves.flatMap(\.items).first(where: { $0.id == itemID }) else {
                     return
                 }
 
@@ -483,7 +644,7 @@ struct ARShelfRealityView: UIViewRepresentable {
                 )
                 itemEntity.addChild(outline)
                 selectionOutline = outline
-                outlinedTarget = ARShelfSelectionTarget.item(itemID)
+                outlinedTarget = .item(itemID)
             case nil:
                 break
             }
@@ -496,26 +657,31 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         func syncTransformsToModel() {
-            for item in viewModel.shelf.items {
-                guard let entity = itemEntities[item.id] else {
-                    continue
-                }
+            for shelf in viewModel.room.shelves {
+                for item in shelf.items {
+                    guard let entity = itemEntities[item.id] else {
+                        continue
+                    }
 
-                item.transformSnapshot = TransformSnapshot(
-                    position: entity.position,
-                    rotation: entity.orientation,
-                    scale: entity.scale
-                )
+                    item.transformSnapshot = TransformSnapshot(
+                        position: entity.position,
+                        rotation: entity.orientation,
+                        scale: entity.scale
+                    )
+                }
             }
         }
 
-        func syncShelfTransformToModel() {
-            guard let shelfEntity else {
-                return
-            }
+        func syncShelfTransformsToModel() {
+            for (shelfID, shelfEntity) in shelfEntities {
+                guard let shelf = viewModel.room.shelves.first(where: { $0.id == shelfID }) else {
+                    continue
+                }
 
-            let worldTransform = shelfEntity.transformMatrix(relativeTo: nil)
-            viewModel.shelf.anchorTransformData = MatrixCoder.encode(worldTransform)
+                let worldTransform = shelfEntity.transformMatrix(relativeTo: nil)
+                shelf.anchorTransformData = MatrixCoder.encode(worldTransform)
+                shelf.updatedAt = .now
+            }
         }
     }
 }

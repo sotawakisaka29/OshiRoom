@@ -4,13 +4,16 @@ import SwiftData
 enum PreviewModelContainer {
     @MainActor
     static func make() -> ModelContainer {
-        let modelTypes: [any PersistentModel.Type] = [Shelf.self, PlacedItem.self, ScannedModel.self]
+        let modelTypes: [any PersistentModel.Type] = [Room.self, Shelf.self, PlacedItem.self, ScannedModel.self]
         let schema = Schema(modelTypes)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
 
         do {
             let container = try ModelContainer(for: schema, configurations: [configuration])
-            let shelf = Shelf(name: "ライブ記念棚", template: .wood)
+            let room = Room(name: "ライブ記念ルーム")
+            let shelf = Shelf(name: "メイン棚", template: .wood, room: room)
+            room.shelves.append(shelf)
+            container.mainContext.insert(room)
             container.mainContext.insert(shelf)
             return container
         } catch {

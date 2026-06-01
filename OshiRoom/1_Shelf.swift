@@ -12,6 +12,7 @@ final class Shelf {
     var createdAt: Date
     var updatedAt: Date
     var anchorTransformData: Data?
+    var room: Room?
 
     @Relationship(deleteRule: .cascade, inverse: \PlacedItem.shelf)
     var items: [PlacedItem]
@@ -25,6 +26,7 @@ final class Shelf {
         createdAt: Date = .now,
         updatedAt: Date = .now,
         anchorTransformData: Data? = nil,
+        room: Room? = nil,
         items: [PlacedItem] = []
     ) {
         self.id = id
@@ -35,6 +37,7 @@ final class Shelf {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.anchorTransformData = anchorTransformData
+        self.room = room
         self.items = items
     }
 

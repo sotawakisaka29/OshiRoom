@@ -2,35 +2,33 @@ import Foundation
 import Observation
 import SwiftData
 
-/// 棚作成画面の入力状態と保存処理を持つViewModelです。
+/// 部屋作成画面の入力状態と保存処理を持つViewModelです。
 @Observable
-final class ShelfCreationViewModel {
+final class RoomCreationViewModel {
     var name = ""
-    var selectedTemplate: ShelfTemplate = .wood
     var validationMessage: String?
 
     var canSave: Bool {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
-    func createShelf(in modelContext: ModelContext) -> Shelf? {
+    func createRoom(in modelContext: ModelContext) -> Room? {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard trimmedName.isEmpty == false else {
-            validationMessage = "棚名を入力してください。"
+            validationMessage = "部屋名を入力してください。"
             return nil
         }
 
-        let shelf = Shelf(
+        let room = Room(
             name: trimmedName,
-            template: selectedTemplate,
             displayOrder: nextDisplayOrder(in: modelContext)
         )
-        modelContext.insert(shelf)
+        modelContext.insert(room)
 
         do {
             try modelContext.save()
-            return shelf
+            return room
         } catch {
             validationMessage = "保存に失敗しました。もう一度試してください。"
             return nil
@@ -38,8 +36,8 @@ final class ShelfCreationViewModel {
     }
 
     private func nextDisplayOrder(in modelContext: ModelContext) -> Int {
-        let descriptor = FetchDescriptor<Shelf>(sortBy: [SortDescriptor(\Shelf.displayOrder, order: .reverse)])
-        let shelves = (try? modelContext.fetch(descriptor)) ?? []
-        return (shelves.first?.displayOrder ?? -1) + 1
+        let descriptor = FetchDescriptor<Room>(sortBy: [SortDescriptor(\Room.displayOrder, order: .reverse)])
+        let rooms = (try? modelContext.fetch(descriptor)) ?? []
+        return (rooms.first?.displayOrder ?? -1) + 1
     }
 }

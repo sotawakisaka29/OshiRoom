@@ -6,10 +6,12 @@ struct ARShelfView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var viewModel: ARShelfViewModel
     @State private var isShowingAddGoods = false
+    @State private var isShowingGoodsShelfPicker = false
+    @State private var isShowingAddShelf = false
     @State private var isInterfaceHidden = false
 
-    init(shelf: Shelf) {
-        _viewModel = State(initialValue: ARShelfViewModel(shelf: shelf))
+    init(room: Room) {
+        _viewModel = State(initialValue: ARShelfViewModel(room: room))
     }
 
     var body: some View {
@@ -20,23 +22,17 @@ struct ARShelfView: View {
                 CameraUsageDescriptionMissingView()
             }
         }
-        .navigationTitle(viewModel.shelf.name)
+        .navigationTitle(viewModel.room.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(isInterfaceHidden ? .hidden : .visible, for: .navigationBar)
         .toolbar {
             if isInterfaceHidden == false {
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         isInterfaceHidden = true
                         viewModel.statusMessage = "UIを非表示にしました。オブジェクト以外をタップすると再表示できます。"
                     } label: {
                         Image(systemName: "eye.slash")
-                    }
-
-                    Button {
-                        viewModel.requestSave()
-                    } label: {
-                        Image(systemName: "square.and.arrow.down")
                     }
                 }
             }
@@ -69,32 +65,61 @@ struct ARShelfView: View {
                 isShowingAddGoods = false
             }
         }
+        .sheet(isPresented: $isShowingGoodsShelfPicker) {
+            GoodsShelfPickerView(shelves: viewModel.placedShelves) { shelf in
+                viewModel.selectShelfForGoodsInsertion(id: shelf.id)
+                isShowingGoodsShelfPicker = false
+                isShowingAddGoods = true
+            }
+            .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $isShowingAddShelf) {
+            ShelfTemplatePickerView { template in
+                viewModel.addShelf(template: template, modelContext: modelContext)
+                isShowingAddShelf = false
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 
     private var editControls: some View {
         VStack(spacing: 12) {
-            StatusCapsule(message: viewModel.statusMessage)
-
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Button {
                         viewModel.switchMode(.shelfEdit)
                     } label: {
-                        BottomMenuItem(
+                        EditorTabItem(
                             title: "棚編集",
                             symbolName: "shippingbox",
-                            isActive: viewModel.mode == .shelfEdit
+                            isActive: activeEditorMode == .shelfEdit
                         )
                     }
 
                     Button {
                         viewModel.switchMode(.goodsEdit)
                     } label: {
-                        BottomMenuItem(
+                        EditorTabItem(
                             title: "グッズ編集",
                             symbolName: "photo",
-                            isActive: viewModel.mode == .goodsEdit
+                            isActive: activeEditorMode == .goodsEdit
                         )
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        if activeEditorMode == .shelfEdit {
+                            isShowingAddShelf = true
+                        } else {
+                            if viewModel.placedShelves.isEmpty {
+                                viewModel.statusMessage = "先にAR空間へ配置済みの棚を用意してください。"
+                            } else {
+                                isShowingGoodsShelfPicker = true
+                            }
+                        }
+                    } label: {
+                        BottomMenuItem(title: addButtonTitle, symbolName: addButtonSymbolName)
                     }
 
                     Button {
@@ -106,13 +131,15 @@ struct ARShelfView: View {
                             isActive: viewModel.isHeightAdjustmentActive
                         )
                     }
-                }
 
-                HStack(spacing: 10) {
                     Button {
-                        isShowingAddGoods = true
+                        viewModel.toggleRotationAdjustment()
                     } label: {
-                        BottomMenuItem(title: "グッズ追加", symbolName: "photo.badge.plus")
+                        BottomMenuItem(
+                            title: "回転",
+                            symbolName: "rotate.3d",
+                            isActive: viewModel.isRotationAdjustmentActive
+                        )
                     }
 
                     Button {
@@ -121,11 +148,11 @@ struct ARShelfView: View {
                         BottomMenuItem(
                             title: "削除",
                             symbolName: "trash",
-                            foregroundColor: viewModel.selectedItemID == nil ? AppColors.textMuted : Color(red: 0.74, green: 0.04, blue: 0.10)
+                            foregroundColor: canDeleteCurrentSelection ? Color(red: 0.74, green: 0.04, blue: 0.10) : AppColors.textMuted
                         )
                     }
-                    .disabled(viewModel.selectedItemID == nil)
-                    .opacity(viewModel.selectedItemID == nil ? 0.55 : 1)
+                    .disabled(canDeleteCurrentSelection == false)
+                    .opacity(canDeleteCurrentSelection ? 1 : 0.55)
 
                 }
             }
@@ -138,6 +165,29 @@ struct ARShelfView: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 22)
+    }
+
+    private var activeEditorMode: ARInteractionMode {
+        viewModel.mode == .goodsEdit ? .goodsEdit : .shelfEdit
+    }
+
+    private var addButtonTitle: String {
+        activeEditorMode == .shelfEdit ? "棚を追加" : "グッズ追加"
+    }
+
+    private var addButtonSymbolName: String {
+        activeEditorMode == .shelfEdit ? "plus.square.on.square" : "photo.badge.plus"
+    }
+
+    private var canDeleteCurrentSelection: Bool {
+        switch activeEditorMode {
+        case .shelfEdit:
+            return viewModel.selectedShelfID != nil
+        case .goodsEdit:
+            return viewModel.selectedItemID != nil
+        case .placement:
+            return false
+        }
     }
 
     private var hasCameraUsageDescription: Bool {
@@ -162,6 +212,29 @@ struct StatusCapsule: View {
             .padding(.vertical, 10)
             .background(AppColors.elevatedSurface, in: Capsule())
             .overlay(Capsule().stroke(AppColors.separator, lineWidth: 1))
+    }
+}
+
+struct EditorTabItem: View {
+    let title: String
+    let symbolName: String
+    var isActive = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbolName)
+                .font(.subheadline.weight(.semibold))
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+        }
+        .foregroundStyle(isActive ? .white : AppColors.textSecondary)
+        .frame(maxWidth: .infinity)
+        .frame(height: 46)
+        .background(isActive ? AppColors.textPrimary : AppColors.elevatedSurface, in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(isActive ? AppColors.textPrimary : AppColors.separator, lineWidth: 1)
+        )
     }
 }
 
@@ -215,6 +288,166 @@ struct CameraUsageDescriptionMissingView: View {
 }
 
 #Preview {
-    ARShelfView(shelf: Shelf(name: "ライブ記念棚", template: .glass))
+    ARShelfView(room: Room(name: "ライブ記念ルーム"))
         .modelContainer(PreviewModelContainer.make())
+}
+
+struct ShelfTemplatePickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let onSelected: (ShelfTemplate) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("棚を追加")
+                            .font(.system(.title2, design: .rounded).weight(.bold))
+                            .foregroundStyle(AppColors.textPrimary)
+                        Text("置きたい棚の種類を選ぶと、次の床タップで追加できます。")
+                            .font(.callout)
+                            .foregroundStyle(AppColors.textSecondary)
+                    }
+
+                    ForEach(ShelfTemplate.allCases) { template in
+                        ShelfTemplateRow(
+                            template: template,
+                            isSelected: false
+                        ) {
+                            onSelected(template)
+                            dismiss()
+                        }
+                    }
+                }
+                .padding(22)
+            }
+            .background(AppColors.groupedBackground.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct GoodsShelfPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let shelves: [Shelf]
+    let onSelected: (Shelf) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if shelves.isEmpty {
+                    VStack(spacing: 14) {
+                        Image(systemName: "shippingbox")
+                            .font(.system(size: 38, weight: .light))
+                            .foregroundStyle(AppColors.textSecondary)
+                        Text("追加先の棚がありません")
+                            .font(.headline)
+                            .foregroundStyle(AppColors.textPrimary)
+                        Text("先に棚をAR空間へ配置してください。")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AppColors.groupedBackground)
+                } else {
+                    List {
+                        ForEach(shelves) { shelf in
+                            Button {
+                                onSelected(shelf)
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 14) {
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .fill(shelf.template.tint.opacity(0.16))
+                                        .frame(width: 58, height: 58)
+                                        .overlay {
+                                            Image(systemName: shelf.template.symbolName)
+                                                .foregroundStyle(shelf.template.tint)
+                                        }
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(shelf.name)
+                                            .font(.headline)
+                                            .foregroundStyle(AppColors.textPrimary)
+                                        Text("\(shelf.items.count)個のグッズ")
+                                            .font(.caption)
+                                            .foregroundStyle(AppColors.textSecondary)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(AppColors.textMuted)
+                                }
+                                .padding(.vertical, 6)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(AppColors.groupedBackground)
+                }
+            }
+            .navigationTitle("追加先の棚")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct ShelfTemplateRow: View {
+    let template: ShelfTemplate
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: template.symbolName)
+                    .font(.title3)
+                    .foregroundStyle(template.tint)
+                    .frame(width: 46, height: 46)
+                    .background(template.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(template.title)
+                        .font(.headline)
+                        .foregroundStyle(AppColors.textPrimary)
+                    Text(template.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(AppColors.textSecondary)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(AppColors.textPrimary)
+                }
+            }
+            .padding(14)
+            .background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(isSelected ? AppColors.textPrimary.opacity(0.28) : AppColors.separator, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
 }
