@@ -132,7 +132,7 @@ enum ScanMethod: String, CaseIterable, Identifiable {
         case .photogrammetry:
             "camera.aperture"
         case .objectCapture:
-            "cube.viewfinder"
+            "cube"
         case .trueDepth:
             "faceid"
         }

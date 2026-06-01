@@ -28,6 +28,7 @@ struct ModelScanView: View {
 /// Apple公式のObjectCapture UIで写真セットを作り、PhotogrammetrySessionでUSDZ生成します。
 @MainActor
 struct ObjectCapturePhotogrammetryScanView: View {
+	@Environment(\.dismiss) private var dismiss
 	@Environment(\.modelContext) private var modelContext
 	@State private var session: ObjectCaptureSession?
 	@State private var currentModelID = UUID()
@@ -36,9 +37,11 @@ struct ObjectCapturePhotogrammetryScanView: View {
 	@State private var statusMessage = "開始するとObjectCaptureで撮影補助を行います。"
 	@State private var isProcessing = false
 	@State private var progressText = ""
+	@State private var shouldDismissAfterProcessing = false
 
 	var body: some View {
-		VStack(spacing: 12) {
+		ZStack {
+			VStack(spacing: 12) {
 			Group {
 				if ObjectCaptureSession.isSupported,
 					 PhotogrammetrySession.isSupported {
@@ -67,7 +70,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
 			Spacer(minLength: 0)
 
 			VStack(spacing: 8) {
-				if statusLabelText.isEmpty == false {
+				if isProcessing == false, statusLabelText.isEmpty == false {
 					Text(statusLabelText)
 						.font(.footnote.weight(.semibold))
 						.foregroundStyle(AppColors.textPrimary)
@@ -82,7 +85,13 @@ struct ObjectCapturePhotogrammetryScanView: View {
 			objectCaptureControls
 				.padding(.horizontal, 16)
 				.padding(.bottom, 12)
+			}
+
+			if isProcessing {
+				processingOverlay
+			}
 		}
+		.animation(.snappy(duration: 0.28), value: isProcessing)
 	}
 
 	private var statusLabelText: String {
@@ -91,7 +100,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
 
 	private var objectCaptureIntroView: some View {
 		VStack(spacing: 14) {
-			Image(systemName: "cube.viewfinder")
+			Image(systemName: "cube")
 				.font(.system(size: 42, weight: .light))
 				.foregroundStyle(AppColors.textSecondary)
 			Text("ObjectCapture方式")
@@ -109,7 +118,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
 
 	private var objectCaptureUnsupportedView: some View {
 		VStack(spacing: 12) {
-			Image(systemName: "cube.viewfinder")
+			Image(systemName: "cube")
 				.font(.system(size: 42, weight: .light))
 				.foregroundStyle(AppColors.textSecondary)
 			Text(objectCaptureUnsupportedTitle)
@@ -158,6 +167,33 @@ struct ObjectCapturePhotogrammetryScanView: View {
 			.disabled(primaryActionIsDisabled)
 		}
 		.frame(maxWidth: .infinity)
+	}
+
+	private var processingOverlay: some View {
+		ZStack {
+			Color.black.opacity(0.28)
+				.ignoresSafeArea()
+
+			VStack(spacing: 18) {
+				VStack(spacing: 8) {
+					PulsingCubeLoader()
+
+					Text("3Dモデルを生成中")
+						.font(.headline.weight(.semibold))
+						.foregroundStyle(AppColors.textPrimary)
+
+					if statusLabelText.isEmpty == false {
+						Text(statusLabelText)
+							.font(.subheadline.weight(.medium))
+							.foregroundStyle(AppColors.textSecondary)
+							.multilineTextAlignment(.center)
+					}
+				}
+				.padding(.horizontal, 24)
+			}
+			.padding(28)
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
+		}
 	}
 
 	private var primaryActionTitle: String {
@@ -330,6 +366,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
 
 		isProcessing = true
 		progressText = ""
+		shouldDismissAfterProcessing = false
 		statusMessage = "3Dモデルを作成しています"
 
 		Task {
@@ -361,20 +398,26 @@ struct ObjectCapturePhotogrammetryScanView: View {
 				case .requestProgress(_, let fractionComplete):
 					progressText = "\(Int(fractionComplete * 100))%"
 				case .requestComplete(_, _):
+					shouldDismissAfterProcessing = true
 					saveObjectCaptureModel(outputPath: outputPath, captureDirectoryPath: captureDirectoryPath)
 					deleteObjectCaptureImages(relativePath: captureDirectoryPath)
 					statusMessage = "ObjectCaptureモデルの生成が完了しました。"
 				case .requestError(_, _):
+					shouldDismissAfterProcessing = false
 					saveFailedObjectCaptureModel(captureDirectoryPath: captureDirectoryPath)
 					statusMessage = "ObjectCaptureモデルの生成に失敗しました。"
 				case .processingComplete:
 					isProcessing = false
 					progressText = ""
+					if shouldDismissAfterProcessing {
+						dismiss()
+					}
 				default:
 					break
 				}
 			}
 		} catch {
+			shouldDismissAfterProcessing = false
 			saveFailedObjectCaptureModel(captureDirectoryPath: captureDirectoryPath)
 			statusMessage = "ObjectCaptureモデルの生成に失敗しました。"
 			isProcessing = false
@@ -443,6 +486,35 @@ struct ObjectCapturePhotogrammetryScanView: View {
 		@unknown default:
 			return "ObjectCaptureの状態を確認しています。"
 		}
+	}
+}
+
+private struct PulsingCubeLoader: View {
+	@State private var startDate = Date()
+
+	var body: some View {
+		TimelineView(.animation) { context in
+			let elapsed = context.date.timeIntervalSince(startDate)
+			let pulse = 0.92 + 0.12 * ((sin(elapsed * 2.4) + 1.0) / 2.0)
+			let bob = 3.0 * sin(elapsed * 2.2)
+			let ringScale = 0.92 + 0.10 * ((sin(elapsed * 1.8) + 1.0) / 2.0)
+			let ringOpacity = 0.18 + 0.16 * ((sin(elapsed * 1.8 + .pi) + 1.0) / 2.0)
+
+			ZStack {
+				Circle()
+					.stroke(AppColors.textSecondary.opacity(ringOpacity), lineWidth: 2)
+					.frame(width: 34, height: 34)
+					.scaleEffect(ringScale)
+
+				Image(systemName: "cube.fill")
+					.font(.system(size: 22, weight: .semibold))
+					.foregroundStyle(AppColors.textSecondary)
+					.scaleEffect(pulse)
+					.offset(y: bob)
+			}
+			.accessibilityHidden(true)
+		}
+		.frame(height: 28)
 	}
 }
 
