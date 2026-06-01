@@ -5,9 +5,10 @@ import UIKit
 import simd
 
 /// AR空間で現在選択されている対象です。
-enum ARShelfSelectionTarget: Equatable {
+enum ARShelfSelectionTarget: Equatable, Hashable {
     case shelf(UUID)
     case item(UUID)
+    case allShelves
 }
 
 /// AR配置画面の状態を管理し、SwiftDataへ保存するViewModelです。
@@ -22,6 +23,8 @@ final class ARShelfViewModel {
     var saveRequestToken = 0
     var deleteRequestToken = 0
     var selectedTarget: ARShelfSelectionTarget?
+    var isMultipleSelectionActive = false
+    var multiSelectionTargets: Set<ARShelfSelectionTarget> = []
     var shelfMoveMode: ShelfMoveMode = .horizontalPlane
     var goodsMoveMode: ShelfMoveMode = .horizontalPlane
 
@@ -42,11 +45,18 @@ final class ARShelfViewModel {
     }
 
     var selectedShelfID: UUID? {
+        if isMultipleSelectionActive {
+            let shelfIDs = selectedShelfIDs
+            return shelfIDs.count == 1 ? shelfIDs.first : nil
+        }
+
         switch selectedTarget {
         case .shelf(let id):
             return id
         case .item:
             return selectedItem?.shelf?.id
+        case .allShelves:
+            return nil
         case nil:
             return nil
         }
@@ -59,7 +69,30 @@ final class ARShelfViewModel {
         return room.shelves.first { $0.id == selectedShelfID }
     }
 
+    var selectedShelves: [Shelf] {
+        if isMultipleSelectionActive {
+            return selectedShelfIDs.compactMap { shelfID in
+                room.shelves.first { $0.id == shelfID }
+            }
+        }
+
+        if isAllShelvesSelectionActive {
+            return placedShelves
+        }
+
+        guard let selectedShelf else {
+            return []
+        }
+
+        return [selectedShelf]
+    }
+
     var selectedItemID: UUID? {
+        if isMultipleSelectionActive {
+            let itemIDs = selectedItemIDs
+            return itemIDs.count == 1 ? itemIDs.first : nil
+        }
+
         guard case let .item(id) = selectedTarget else {
             return nil
         }
@@ -91,7 +124,55 @@ final class ARShelfViewModel {
     }
 
     var canDeleteSelection: Bool {
-        selectedItemID != nil || selectedShelfID != nil
+        hasActiveSelection
+    }
+
+    var isAllShelvesSelectionActive: Bool {
+        selectedTarget == .allShelves
+    }
+
+    var hasActiveSelection: Bool {
+        activeSelectionTargets.isEmpty == false
+    }
+
+    var activeSelectionTargets: [ARShelfSelectionTarget] {
+        if isMultipleSelectionActive {
+            return sortedSelectionTargets(multiSelectionTargets)
+        }
+
+        guard let selectedTarget else {
+            return []
+        }
+
+        return [selectedTarget]
+    }
+
+    var selectedShelfIDs: [UUID] {
+        activeSelectionTargets.compactMap { target in
+            guard case let .shelf(id) = target else {
+                return nil
+            }
+
+            return id
+        }
+    }
+
+    var selectedItemIDs: [UUID] {
+        activeSelectionTargets.compactMap { target in
+            guard case let .item(id) = target else {
+                return nil
+            }
+
+            return id
+        }
+    }
+
+    var selectedItems: [PlacedItem] {
+        selectedItemIDs.compactMap { itemID in
+            room.shelves
+                .flatMap(\.items)
+                .first { $0.id == itemID }
+        }
     }
 
     func addShelf(template: ShelfTemplate, modelContext: ModelContext) {
@@ -117,8 +198,36 @@ final class ARShelfViewModel {
 
     func completePendingShelfPlacement(for shelfID: UUID) {
         pendingShelfID = nil
+        isMultipleSelectionActive = false
+        multiSelectionTargets.removeAll()
         switchMode(.shelfEdit)
         selectShelf(id: shelfID)
+    }
+
+    func toggleMultipleSelection() {
+        if isMultipleSelectionActive {
+            isMultipleSelectionActive = false
+            clearSelection()
+            statusMessage = mode.selectionPrompt
+            return
+        }
+
+        if mode == .placement {
+            switchMode(.shelfEdit)
+        }
+
+        isMultipleSelectionActive = true
+
+        if let selectedTarget {
+            switch selectedTarget {
+            case .allShelves:
+                multiSelectionTargets = Set(placedShelves.map { .shelf($0.id) })
+            default:
+                multiSelectionTargets = [selectedTarget]
+            }
+        }
+
+        statusMessage = "複数選択を有効にしました。棚やオブジェクトをタップして追加できます。"
     }
 
     func queueGoods(image: UIImage, imagePath: String, modelContext: ModelContext) {
@@ -144,6 +253,8 @@ final class ARShelfViewModel {
         modelContext.insert(item)
         pendingGoods = PendingGoods(item: item, content: .image(image))
         mode = .goodsEdit
+        isMultipleSelectionActive = false
+        multiSelectionTargets.removeAll()
         selectedTarget = .item(item.id)
         statusMessage = "グッズを棚へ配置しました"
     }
@@ -156,8 +267,14 @@ final class ARShelfViewModel {
         }
 
         mode = .goodsEdit
+        isMultipleSelectionActive = false
+        multiSelectionTargets.removeAll()
         selectedTarget = .shelf(id)
         statusMessage = "「\(shelf.name)」に追加します。写真か3Dモデルを選んでください。"
+    }
+
+    func toggleAllShelvesSelection() {
+        toggleMultipleSelection()
     }
 
     func queueModel(_ model: ScannedModel, modelContext: ModelContext) {
@@ -192,27 +309,51 @@ final class ARShelfViewModel {
         modelContext.insert(item)
         pendingGoods = PendingGoods(item: item, content: .model3D(modelPath))
         mode = .goodsEdit
+        isMultipleSelectionActive = false
+        multiSelectionTargets.removeAll()
         selectedTarget = .item(item.id)
         statusMessage = "3Dモデルを棚へ配置しました"
     }
 
     func selectItem(id: UUID?) {
-        selectedTarget = id.map { .item($0) }
-
-        if id == nil {
-            statusMessage = mode.selectionPrompt
+        if isMultipleSelectionActive {
+            if let id {
+                let isSelected = toggleMultiSelectionTarget(.item(id))
+                statusMessage = isSelected
+                    ? goodsMoveMode.goodsSelectedMessage
+                    : "選択を解除しました。"
+            } else {
+                clearSelection()
+                statusMessage = mode.selectionPrompt
+            }
         } else {
-            statusMessage = goodsMoveMode.goodsSelectedMessage
+            selectedTarget = id.map { .item($0) }
+            if id == nil {
+                statusMessage = mode.selectionPrompt
+            } else {
+                statusMessage = goodsMoveMode.goodsSelectedMessage
+            }
         }
     }
 
     func selectShelf(id: UUID?) {
-        selectedTarget = id.map { .shelf($0) }
-
-        if id == nil {
-            statusMessage = mode.selectionPrompt
+        if isMultipleSelectionActive {
+            if let id {
+                let isSelected = toggleMultiSelectionTarget(.shelf(id))
+                statusMessage = isSelected
+                    ? shelfMoveMode.shelfSelectedMessage
+                    : "選択を解除しました。"
+            } else {
+                clearSelection()
+                statusMessage = mode.selectionPrompt
+            }
         } else {
-            statusMessage = shelfMoveMode.shelfSelectedMessage
+            selectedTarget = id.map { .shelf($0) }
+            if id == nil {
+                statusMessage = mode.selectionPrompt
+            } else {
+                statusMessage = shelfMoveMode.shelfSelectedMessage
+            }
         }
     }
 
@@ -227,13 +368,13 @@ final class ARShelfViewModel {
         case .shelfEdit:
             shelfMoveMode = .horizontalPlane
             goodsMoveMode = .horizontalPlane
-            if case .item = selectedTarget {
+            if isMultipleSelectionActive == false, case .item = selectedTarget {
                 selectedTarget = nil
             }
         case .goodsEdit:
             shelfMoveMode = .horizontalPlane
             goodsMoveMode = .horizontalPlane
-            if selectedItemID == nil {
+            if isMultipleSelectionActive == false, (selectedItemID == nil || isAllShelvesSelectionActive) {
                 selectedTarget = nil
             }
         }
@@ -277,8 +418,18 @@ final class ARShelfViewModel {
 
     private func toggleShelfHeightAdjustment() {
         shelfMoveMode = shelfMoveMode == .height ? .horizontalPlane : .height
-        if case .shelf = selectedTarget {
+        if isMultipleSelectionActive, selectedShelfIDs.isEmpty == false {
+            statusMessage = shelfMoveMode == .height
+                ? "複数の棚を選択しています。高さを調整できます。"
+                : "複数の棚を選択しています。移動できます。"
+        } else if selectedTarget == .allShelves {
+            statusMessage = shelfMoveMode == .height
+                ? "すべての棚を選択しています。高さを調整できます。"
+                : "すべての棚を選択しています。移動できます。"
+        } else if case .shelf = selectedTarget {
             statusMessage = shelfMoveMode.shelfSelectedMessage
+        } else if isMultipleSelectionActive {
+            statusMessage = "棚が選択されていません。棚を選択してから試してください。"
         } else {
             statusMessage = shelfMoveMode.selectionPrompt
         }
@@ -286,8 +437,18 @@ final class ARShelfViewModel {
 
     private func toggleShelfRotationAdjustment() {
         shelfMoveMode = shelfMoveMode == .rotation ? .horizontalPlane : .rotation
-        if case .shelf = selectedTarget {
+        if isMultipleSelectionActive, selectedShelfIDs.isEmpty == false {
+            statusMessage = shelfMoveMode == .rotation
+                ? "複数の棚を選択しています。回転を調整できます。"
+                : "複数の棚を選択しています。移動できます。"
+        } else if selectedTarget == .allShelves {
+            statusMessage = shelfMoveMode == .rotation
+                ? "すべての棚を選択しています。回転を調整できます。"
+                : "すべての棚を選択しています。移動できます。"
+        } else if case .shelf = selectedTarget {
             statusMessage = shelfMoveMode.shelfSelectedMessage
+        } else if isMultipleSelectionActive {
+            statusMessage = "棚が選択されていません。棚を選択してから試してください。"
         } else {
             statusMessage = shelfMoveMode.selectionPrompt
         }
@@ -295,8 +456,12 @@ final class ARShelfViewModel {
 
     private func toggleGoodsHeightAdjustment() {
         goodsMoveMode = goodsMoveMode == .height ? .horizontalPlane : .height
-        if selectedItemID != nil {
+        if isMultipleSelectionActive, selectedItemIDs.isEmpty == false {
             statusMessage = goodsMoveMode.goodsSelectedMessage
+        } else if selectedItemID != nil {
+            statusMessage = goodsMoveMode.goodsSelectedMessage
+        } else if isMultipleSelectionActive {
+            statusMessage = "グッズが選択されていません。オブジェクトを選択してから試してください。"
         } else {
             statusMessage = goodsMoveMode.goodsSelectionPrompt
         }
@@ -304,8 +469,12 @@ final class ARShelfViewModel {
 
     private func toggleGoodsRotationAdjustment() {
         goodsMoveMode = goodsMoveMode == .rotation ? .horizontalPlane : .rotation
-        if selectedItemID != nil {
+        if isMultipleSelectionActive, selectedItemIDs.isEmpty == false {
             statusMessage = goodsMoveMode.goodsSelectedMessage
+        } else if selectedItemID != nil {
+            statusMessage = goodsMoveMode.goodsSelectedMessage
+        } else if isMultipleSelectionActive {
+            statusMessage = "グッズが選択されていません。オブジェクトを選択してから試してください。"
         } else {
             statusMessage = goodsMoveMode.goodsSelectionPrompt
         }
@@ -314,7 +483,7 @@ final class ARShelfViewModel {
     func requestDeleteSelected() {
         guard canDeleteSelection else {
             statusMessage = mode == .shelfEdit
-                ? "先に削除したい棚をタップして選択してください。"
+                ? "先に削除したい棚を選択してください。"
                 : "先に削除したいグッズをタップして選択してください。"
             return
         }
@@ -323,13 +492,89 @@ final class ARShelfViewModel {
     }
 
     func deleteSelected(modelContext: ModelContext) -> Bool {
+        if isMultipleSelectionActive || multiSelectionTargets.count > 1 {
+            return deleteSelectedTargets(modelContext: modelContext)
+        }
+
         switch selectedTarget {
         case .item:
             return deleteSelectedItem(modelContext: modelContext)
         case .shelf:
             return deleteSelectedShelf(modelContext: modelContext)
+        case .allShelves:
+            return deleteSelectedShelves(modelContext: modelContext)
         case nil:
             statusMessage = "削除する対象が見つかりませんでした。"
+            return false
+        }
+    }
+
+    private func deleteSelectedTargets(modelContext: ModelContext) -> Bool {
+        let targets = activeSelectionTargets
+        guard targets.isEmpty == false else {
+            statusMessage = "削除する対象が見つかりませんでした。"
+            return false
+        }
+
+        if targets.contains(.allShelves) {
+            return deleteSelectedShelves(modelContext: modelContext)
+        }
+
+        let selectedShelfIDs = Set(targets.compactMap { target -> UUID? in
+            guard case let .shelf(id) = target else { return nil }
+            return id
+        })
+
+        let selectedItemIDs = Set(targets.compactMap { target -> UUID? in
+            guard case let .item(id) = target else { return nil }
+            return id
+        })
+        let didDeleteShelves = selectedShelfIDs.isEmpty == false
+
+        var imagePathsToDelete: [String] = []
+
+        for itemID in selectedItemIDs {
+            guard let item = room.shelves.flatMap(\.items).first(where: { $0.id == itemID }),
+                  let shelf = item.shelf,
+                  selectedShelfIDs.contains(shelf.id) == false else {
+                continue
+            }
+
+            shelf.items.removeAll { $0.id == item.id }
+            modelContext.delete(item)
+            if item.contentType == .image, item.imagePath.isEmpty == false {
+                imagePathsToDelete.append(item.imagePath)
+            }
+            shelf.updatedAt = .now
+        }
+
+        for shelfID in selectedShelfIDs {
+            guard let shelf = room.shelves.first(where: { $0.id == shelfID }) else {
+                continue
+            }
+
+            imagePathsToDelete.append(contentsOf: shelf.items.filter { $0.contentType == .image && $0.imagePath.isEmpty == false }.map(\.imagePath))
+            modelContext.delete(shelf)
+        }
+
+        room.shelves.removeAll { shelf in
+            selectedShelfIDs.contains(shelf.id)
+        }
+        selectedTarget = nil
+        multiSelectionTargets.removeAll()
+        isMultipleSelectionActive = false
+        room.updatedAt = .now
+        if didDeleteShelves {
+            mode = room.shelves.contains { $0.anchorTransformData != nil } ? .shelfEdit : .placement
+        }
+
+        do {
+            try modelContext.save()
+            imagePathsToDelete.forEach { ImageStore.delete(path: $0) }
+            statusMessage = "選択した対象を削除しました。"
+            return true
+        } catch {
+            statusMessage = "削除の保存に失敗しました。もう一度試してください。"
             return false
         }
     }
@@ -382,13 +627,49 @@ final class ARShelfViewModel {
         }
     }
 
+    private func deleteSelectedShelves(modelContext: ModelContext) -> Bool {
+        let shelvesToDelete = placedShelves
+        guard shelvesToDelete.isEmpty == false else {
+            statusMessage = "削除する棚が見つかりませんでした。"
+            return false
+        }
+
+        let imagePaths = shelvesToDelete
+            .flatMap(\.items)
+            .filter { $0.contentType == .image && $0.imagePath.isEmpty == false }
+            .map(\.imagePath)
+
+        for shelf in shelvesToDelete {
+            modelContext.delete(shelf)
+        }
+
+        room.shelves.removeAll { shelf in
+            shelf.anchorTransformData != nil
+        }
+        selectedTarget = nil
+        room.updatedAt = .now
+        mode = room.shelves.contains { $0.anchorTransformData != nil } ? .shelfEdit : .placement
+
+        do {
+            try modelContext.save()
+            imagePaths.forEach { ImageStore.delete(path: $0) }
+            statusMessage = room.shelves.contains { $0.anchorTransformData != nil }
+                ? "棚を削除しました。"
+                : "棚を削除しました。「棚を追加」で新しい棚を置けます。"
+            return true
+        } catch {
+            statusMessage = "削除の保存に失敗しました。もう一度試してください。"
+            return false
+        }
+    }
+
     func requestSave() {
         saveRequestToken += 1
     }
 
     func save(modelContext: ModelContext) -> Bool {
         room.updatedAt = .now
-        selectedShelf?.updatedAt = .now
+        selectedShelves.forEach { $0.updatedAt = .now }
 
         do {
             try modelContext.save()
@@ -397,6 +678,42 @@ final class ARShelfViewModel {
         } catch {
             statusMessage = "保存できませんでした。少し待ってもう一度試してください。"
             return false
+        }
+    }
+
+    private func toggleMultiSelectionTarget(_ target: ARShelfSelectionTarget) -> Bool {
+        var isSelected = true
+
+        if multiSelectionTargets.contains(target) {
+            multiSelectionTargets.remove(target)
+            isSelected = false
+        } else {
+            multiSelectionTargets.insert(target)
+        }
+
+        selectedTarget = target
+        return isSelected
+    }
+
+    private func clearSelection() {
+        selectedTarget = nil
+        multiSelectionTargets.removeAll()
+    }
+
+    private func sortedSelectionTargets(_ targets: Set<ARShelfSelectionTarget>) -> [ARShelfSelectionTarget] {
+        targets.sorted { lhs, rhs in
+            selectionSortKey(lhs) < selectionSortKey(rhs)
+        }
+    }
+
+    private func selectionSortKey(_ target: ARShelfSelectionTarget) -> String {
+        switch target {
+        case .shelf(let id):
+            return "0-\(id.uuidString)"
+        case .item(let id):
+            return "1-\(id.uuidString)"
+        case .allShelves:
+            return "2-all"
         }
     }
 

@@ -9,6 +9,8 @@ struct HomeView: View {
     @State private var isShowingCreation = false
     @State private var selectedRoom: Room?
     @State private var objectListRoom: Room?
+    @State private var roomPendingRename: Room?
+    @State private var renameErrorMessage: String?
     @State private var roomPendingDeletion: Room?
     @State private var deletionErrorMessage: String?
     @State private var isShowingScannedModels = false
@@ -53,6 +55,9 @@ struct HomeView: View {
                                 room: room,
                                 action: {
                                     selectedRoom = room
+                                },
+                                renameAction: {
+                                    roomPendingRename = room
                                 },
                                 objectListAction: {
                                     objectListRoom = room
@@ -142,6 +147,26 @@ struct HomeView: View {
             .sheet(item: $objectListRoom) { room in
                 RoomObjectListView(room: room)
                     .presentationDetents([.medium, .large])
+            }
+            .sheet(item: $roomPendingRename) { room in
+                RoomRenameView(room: room) { updatedName in
+                    if renameRoom(room, to: updatedName) {
+                        roomPendingRename = nil
+                        return true
+                    }
+
+                    return false
+                } onCancel: {
+                    roomPendingRename = nil
+                }
+                .presentationDetents([.medium])
+            }
+            .alert("部屋名を変更できませんでした", isPresented: isShowingRenameError) {
+                Button("OK", role: .cancel) {
+                    renameErrorMessage = nil
+                }
+            } message: {
+                Text(renameErrorMessage ?? "時間をおいてもう一度お試しください。")
             }
             .confirmationDialog("部屋を削除しますか？", isPresented: isShowingDeletionConfirmation, titleVisibility: .visible) {
                 Button("削除", role: .destructive) {
@@ -236,6 +261,17 @@ struct HomeView: View {
         )
     }
 
+    private var isShowingRenameError: Binding<Bool> {
+        Binding(
+            get: { renameErrorMessage != nil },
+            set: { isShowing in
+                if isShowing == false {
+                    renameErrorMessage = nil
+                }
+            }
+        )
+    }
+
     private var isShowingDeletionConfirmation: Binding<Bool> {
         Binding(
             get: { roomPendingDeletion != nil },
@@ -264,6 +300,25 @@ struct HomeView: View {
             imagePaths.forEach { ImageStore.delete(path: $0) }
         } catch {
             deletionErrorMessage = "保存データの削除中に問題が起きました。"
+        }
+    }
+
+    private func renameRoom(_ room: Room, to newName: String) -> Bool {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedName.isEmpty == false else {
+            renameErrorMessage = "部屋名を空欄にはできません。"
+            return false
+        }
+
+        room.name = trimmedName
+        room.updatedAt = .now
+
+        do {
+            try modelContext.save()
+            return true
+        } catch {
+            renameErrorMessage = "部屋名の保存中に問題が起きました。"
+            return false
         }
     }
 
@@ -322,6 +377,7 @@ struct RoomCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     let room: Room
     let action: () -> Void
+    let renameAction: () -> Void
     let objectListAction: () -> Void
 
     private var leadShelf: Shelf? {
@@ -334,53 +390,65 @@ struct RoomCardView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Button(action: action) {
-                HStack(spacing: 16) {
-                    thumbnail
+            HStack(spacing: 16) {
+                thumbnail
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(room.name)
-                            .font(.headline)
-                            .foregroundStyle(AppColors.textPrimary)
-                        Text("\(room.shelves.count)台の棚")
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.textSecondary)
-                        Text("最終更新日: \(room.updatedAt.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.textMuted)
+                VStack(alignment: .leading, spacing: 8) {
+                    Button(action: renameAction) {
+                        HStack(spacing: 6) {
+                            Text(room.name)
+                                .font(.headline)
+                                .foregroundStyle(AppColors.textPrimary)
+
+                            Image(systemName: "pencil")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AppColors.textMuted)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("部屋名を変更")
 
-                    Spacer()
-
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
+                    Text("\(room.shelves.count)台の棚")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.textSecondary)
+                    Text("最終更新日: \(room.updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption)
                         .foregroundStyle(AppColors.textMuted)
                 }
-            }
-            .buttonStyle(.plain)
 
-            Button(action: objectListAction) {
-                HStack(spacing: 8) {
-                    Image(systemName: "rectangle.stack")
-                        .font(.caption.weight(.semibold))
-                    Text("追加済みオブジェクト一覧")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Text("\(objectCount)")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(AppColors.textPrimary)
-                }
-                .foregroundStyle(AppColors.textSecondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(AppColors.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(AppColors.separator, lineWidth: 1)
-                )
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AppColors.textMuted)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("追加済みオブジェクト一覧を開く")
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+
+            HStack(spacing: 10) {
+                Button(action: objectListAction) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "rectangle.stack")
+                            .font(.caption.weight(.semibold))
+                        Text("追加済みオブジェクト一覧")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Text("\(objectCount)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(AppColors.textPrimary)
+                    }
+                    .foregroundStyle(AppColors.textSecondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(AppColors.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(AppColors.separator, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("追加済みオブジェクト一覧を開く")
+            }
         }
         .padding(16)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
@@ -434,6 +502,82 @@ struct RoomCardView: View {
                         .font(.title2)
                         .foregroundStyle(AppColors.textMuted)
                 }
+        }
+    }
+}
+
+/// ホーム画面から部屋名を変更するための編集画面です。
+struct RoomRenameView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var draftName: String
+    let room: Room
+    let onSave: (String) -> Bool
+    let onCancel: () -> Void
+
+    init(room: Room, onSave: @escaping (String) -> Bool, onCancel: @escaping () -> Void) {
+        self.room = room
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _draftName = State(initialValue: room.name)
+    }
+
+    private var canSave: Bool {
+        draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("部屋名を変更")
+                            .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                            .foregroundStyle(AppColors.textPrimary)
+                        Text("あとから分かりやすい名前に変えられます。")
+                            .font(.callout)
+                            .foregroundStyle(AppColors.textSecondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("部屋名")
+                            .font(.headline)
+                            .foregroundStyle(AppColors.textPrimary)
+                        TextField("例: ライブ記念ルーム", text: $draftName)
+                            .textInputAutocapitalization(.never)
+                            .foregroundStyle(AppColors.textPrimary)
+                            .padding(16)
+                            .background(AppColors.background, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(AppColors.separator, lineWidth: 1)
+                            )
+                    }
+                }
+                .padding(22)
+            }
+            .background(AppColors.groupedBackground.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") {
+                        onCancel()
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        guard canSave else {
+                            return
+                        }
+
+                        if onSave(draftName) {
+                            dismiss()
+                        }
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(canSave == false)
+                }
+            }
         }
     }
 }

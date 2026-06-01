@@ -105,6 +105,16 @@ struct ARShelfView: View {
                             isActive: activeEditorMode == .goodsEdit
                         )
                     }
+
+                    Button {
+                        viewModel.toggleMultipleSelection()
+                    } label: {
+                        EditorTabItem(
+                            title: "複数選択",
+                            symbolName: "rectangle.3.group",
+                            isActive: viewModel.isMultipleSelectionActive
+                        )
+                    }
                 }
 
                 HStack(spacing: 10) {
@@ -180,14 +190,7 @@ struct ARShelfView: View {
     }
 
     private var canDeleteCurrentSelection: Bool {
-        switch activeEditorMode {
-        case .shelfEdit:
-            return viewModel.selectedShelfID != nil
-        case .goodsEdit:
-            return viewModel.selectedItemID != nil
-        case .placement:
-            return false
-        }
+        viewModel.canDeleteSelection
     }
 
     private var hasCameraUsageDescription: Bool {
@@ -227,7 +230,7 @@ struct EditorTabItem: View {
             Text(title)
                 .font(.subheadline.weight(.semibold))
         }
-        .foregroundStyle(isActive ? .white : AppColors.textSecondary)
+        .foregroundStyle(isActive ? AppColors.background : AppColors.textSecondary)
         .frame(maxWidth: .infinity)
         .frame(height: 46)
         .background(isActive ? AppColors.textPrimary : AppColors.elevatedSurface, in: Capsule())
@@ -252,7 +255,7 @@ struct BottomMenuItem: View {
             Text(title)
                 .font(.caption.weight(.semibold))
         }
-        .foregroundStyle(isActive ? .white : foregroundColor)
+        .foregroundStyle(isActive ? AppColors.background : foregroundColor)
         .frame(maxWidth: .infinity)
         .frame(height: 64)
         .background(isActive ? AppColors.textPrimary : AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))

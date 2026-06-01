@@ -1,4 +1,5 @@
 import Foundation
+import ARKit
 import simd
 
 /// RealityKitのTransformをSwiftDataへ保存しやすい形にした値です。
@@ -49,5 +50,20 @@ enum MatrixCoder {
             SIMD4<Float>(values[8], values[9], values[10], values[11]),
             SIMD4<Float>(values[12], values[13], values[14], values[15])
         )
+    }
+}
+
+/// ARWorldMapをSwiftDataへ保存するための変換をまとめます。
+enum WorldMapCoder {
+    static func encode(_ worldMap: ARWorldMap) -> Data? {
+        try? NSKeyedArchiver.archivedData(withRootObject: worldMap, requiringSecureCoding: true)
+    }
+
+    static func decode(_ data: Data?) -> ARWorldMap? {
+        guard let data else {
+            return nil
+        }
+
+        return try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data)
     }
 }
