@@ -92,7 +92,7 @@ struct HomeView: View {
 				.padding(.bottom, 26)
 				.accessibilityLabel("新しい棚を作成")
 			}
-			.navigationTitle("My OshiRoom")
+			.navigationTitle("My Oshi Room")
 			.navigationBarTitleDisplayMode(.large)
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) {
@@ -333,6 +333,7 @@ struct HomeView: View {
 
 /// 棚一覧のカードです。
 struct ShelfCardView: View {
+    @Environment(\.colorScheme) private var colorScheme
 	let shelf: Shelf
 	let action: () -> Void
 	let objectListAction: () -> Void
@@ -388,12 +389,30 @@ struct ShelfCardView: View {
 			.accessibilityLabel("追加済みオブジェクト一覧を開く")
 		}
 		.padding(16)
-		.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+		.background(cardBackground, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
 		.overlay(
 			RoundedRectangle(cornerRadius: 26, style: .continuous)
-				.stroke(AppColors.separator, lineWidth: 1)
+				.stroke(cardBorder, lineWidth: 1)
 		)
 	}
+
+    private var cardBackground: Color {
+        switch colorScheme {
+        case .light:
+            return Color(uiColor: .systemGray6)
+        @unknown default:
+            return AppColors.elevatedSurface
+        }
+    }
+
+    private var cardBorder: Color {
+        switch colorScheme {
+        case .light:
+            return AppColors.separator.opacity(0.55)
+        @unknown default:
+            return AppColors.separator
+        }
+    }
 
 	@ViewBuilder
 	private var thumbnail: some View {
