@@ -13,13 +13,15 @@ struct ARShelfRealityView: UIViewRepresentable {
     let isInterfaceHidden: Bool
     let onReady: () -> Void
     let onRequestShowInterface: () -> Void
+    let onSnapshotSaved: (UIImage) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             viewModel: viewModel,
             isInterfaceHidden: isInterfaceHidden,
             onReady: onReady,
-            onRequestShowInterface: onRequestShowInterface
+            onRequestShowInterface: onRequestShowInterface,
+            onSnapshotSaved: onSnapshotSaved
         )
     }
 
@@ -33,6 +35,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         context.coordinator.isInterfaceHidden = isInterfaceHidden
         context.coordinator.onReady = onReady
         context.coordinator.onRequestShowInterface = onRequestShowInterface
+        context.coordinator.onSnapshotSaved = onSnapshotSaved
         context.coordinator.updateMode(viewModel.mode)
         context.coordinator.reloadSceneIfNeeded(in: uiView)
         context.coordinator.syncShelvesIfNeeded(in: uiView)
@@ -52,6 +55,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         var isInterfaceHidden: Bool
         var onReady: () -> Void
         var onRequestShowInterface: () -> Void
+        var onSnapshotSaved: (UIImage) -> Void
         private weak var arView: ARView?
         private var anchorEntities: [UUID: AnchorEntity] = [:]
         private var shelfEntities: [UUID: ModelEntity] = [:]
@@ -90,12 +94,14 @@ struct ARShelfRealityView: UIViewRepresentable {
             viewModel: ARShelfViewModel,
             isInterfaceHidden: Bool,
             onReady: @escaping () -> Void,
-            onRequestShowInterface: @escaping () -> Void
+            onRequestShowInterface: @escaping () -> Void,
+            onSnapshotSaved: @escaping (UIImage) -> Void
         ) {
             self.viewModel = viewModel
             self.isInterfaceHidden = isInterfaceHidden
             self.onReady = onReady
             self.onRequestShowInterface = onRequestShowInterface
+            self.onSnapshotSaved = onSnapshotSaved
         }
 
         func makeARView() -> ARView {
@@ -415,6 +421,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
                         if success {
                             self.viewModel.statusMessage = "スクリーンショットを写真に保存しました。"
+                            self.onSnapshotSaved(saveImage)
                         } else if let error {
                             self.viewModel.statusMessage = "スクリーンショットを保存できませんでした: \(error.localizedDescription)"
                         } else {

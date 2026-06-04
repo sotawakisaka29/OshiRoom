@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 /// ARで棚を配置し、グッズ追加と編集を行う画面です。
 struct ARShelfView: View {
@@ -9,6 +10,7 @@ struct ARShelfView: View {
     @State private var isShowingGoodsShelfPicker = false
     @State private var isShowingAddShelf = false
     @State private var isInterfaceHidden = false
+    @State private var snapshotToShare: SharedSnapshot?
     let onReady: () -> Void
 
     init(room: Room, onReady: @escaping () -> Void = {}) {
@@ -55,6 +57,9 @@ struct ARShelfView: View {
                 onReady: onReady,
                 onRequestShowInterface: {
                     isInterfaceHidden = false
+                },
+                onSnapshotSaved: { image in
+                    snapshotToShare = SharedSnapshot(image: image)
                 }
             )
                 .ignoresSafeArea()
@@ -86,6 +91,11 @@ struct ARShelfView: View {
                 isShowingAddShelf = false
             }
             .presentationDetents([.medium, .large])
+        }
+        .sheet(item: $snapshotToShare) { snapshot in
+            ActivityView(activityItems: [snapshot.image]) {
+                snapshotToShare = nil
+            }
         }
     }
 
@@ -220,6 +230,26 @@ struct ARShelfView: View {
 
         return message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
+}
+
+private struct SharedSnapshot: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+private struct ActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let onDismiss: () -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            onDismiss()
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 /// AR画面下部に出す現在状態の表示です。
