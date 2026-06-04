@@ -4,6 +4,11 @@ import UIKit
 /// 生成したグッズ画像をアプリ内のDocumentsフォルダへ保存します。
 enum ImageStore {
     static let goodsFolderName = "GoodsImages"
+    private static let imageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 24
+        return cache
+    }()
 
     static func save(_ image: UIImage, id: UUID = UUID()) throws -> String {
         let folderURL = try goodsFolderURL()
@@ -15,16 +20,36 @@ enum ImageStore {
         }
 
         try data.write(to: fileURL, options: [.atomic])
+        imageCache.setObject(normalizedImage, forKey: fileURL.lastPathComponent as NSString)
         return fileURL.lastPathComponent
     }
 
+    static func save(_ data: Data, path: String) throws {
+        let folderURL = try goodsFolderURL()
+        let fileURL = folderURL.appendingPathComponent(path)
+        try data.write(to: fileURL, options: [.atomic])
+
+        if let cachedImage = UIImage(data: data) {
+            imageCache.setObject(cachedImage.normalizedForRendering(), forKey: path as NSString)
+        }
+    }
+
     static func load(path: String) -> UIImage? {
+        if let cachedImage = imageCache.object(forKey: path as NSString) {
+            return cachedImage
+        }
+
         guard let folderURL = try? goodsFolderURL() else {
             return nil
         }
 
         let fileURL = folderURL.appendingPathComponent(path)
-        return UIImage(contentsOfFile: fileURL.path)
+        guard let image = UIImage(contentsOfFile: fileURL.path) else {
+            return nil
+        }
+
+        imageCache.setObject(image, forKey: path as NSString)
+        return image
     }
 
     static func url(for path: String) -> URL? {
@@ -36,6 +61,8 @@ enum ImageStore {
     }
 
     static func delete(path: String) {
+        imageCache.removeObject(forKey: path as NSString)
+
         guard let folderURL = try? goodsFolderURL() else {
             return
         }

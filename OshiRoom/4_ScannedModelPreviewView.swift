@@ -36,6 +36,16 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
     }
 
     private func makePreviewEntity() -> Entity {
+        if let cachedEntity = ScannedModelPreviewEntityCache.shared.entity(for: scannedModel) {
+            return cachedEntity.clone(recursive: true)
+        }
+
+        let entity = makePreviewPrototypeEntity()
+        ScannedModelPreviewEntityCache.shared.store(entity, for: scannedModel)
+        return entity.clone(recursive: true)
+    }
+
+    private func makePreviewPrototypeEntity() -> Entity {
         if let modelPath = scannedModel.modelPath,
            let modelURL = ScannedModelStore.url(forRelativePath: modelPath),
            let entity = try? Entity.load(contentsOf: modelURL) {
@@ -286,6 +296,36 @@ struct ScannedModelPreviewRealityView: UIViewRepresentable {
                 min(max(scale.z, minScale), maxScale)
             ]
         }
+    }
+}
+
+private final class ScannedModelPreviewEntityCache {
+    static let shared = ScannedModelPreviewEntityCache()
+
+    private let storage = NSCache<NSString, EntityBox>()
+
+    private init() {
+        storage.countLimit = 8
+    }
+
+    func entity(for model: ScannedModel) -> Entity? {
+        storage.object(forKey: cacheKey(for: model))?.entity
+    }
+
+    func store(_ entity: Entity, for model: ScannedModel) {
+        storage.setObject(EntityBox(entity: entity), forKey: cacheKey(for: model))
+    }
+
+    private func cacheKey(for model: ScannedModel) -> NSString {
+        NSString(string: model.id.uuidString)
+    }
+}
+
+private final class EntityBox {
+    let entity: Entity
+
+    init(entity: Entity) {
+        self.entity = entity
     }
 }
 

@@ -8,6 +8,8 @@ struct HomeView: View {
     @Query(sort: [SortDescriptor(\Room.displayOrder, order: .forward), SortDescriptor(\Room.updatedAt, order: .reverse)]) private var rooms: [Room]
     @State private var isShowingCreation = false
     @State private var selectedRoom: Room?
+    @State private var isShowingRoomLoading = false
+    @State private var loadingRoomName = ""
     @State private var objectListRoom: Room?
     @State private var roomPendingRename: Room?
     @State private var renameErrorMessage: String?
@@ -54,7 +56,7 @@ struct HomeView: View {
                             RoomCardView(
                                 room: room,
                                 action: {
-                                    selectedRoom = room
+                                    beginRoomEntry(room)
                                 },
                                 renameAction: {
                                     roomPendingRename = room
@@ -109,6 +111,12 @@ struct HomeView: View {
                 .padding(.trailing, 22)
                 .padding(.bottom, 26)
                 .accessibilityLabel("新しい部屋を作成")
+
+                if isShowingRoomLoading {
+                    RoomEntryLoadingOverlay(roomName: loadingRoomName)
+                        .transition(.opacity)
+                        .zIndex(1)
+                }
             }
             .navigationTitle("My Oshi Room")
             .navigationBarTitleDisplayMode(.large)
@@ -134,12 +142,16 @@ struct HomeView: View {
             .sheet(isPresented: $isShowingCreation) {
                 RoomCreationView { room in
                     isShowingCreation = false
-                    selectedRoom = room
+                    beginRoomEntry(room)
                 }
                 .presentationDetents([.medium, .large])
             }
             .navigationDestination(item: $selectedRoom) { room in
-                ARShelfView(room: room)
+                ARShelfView(room: room) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        isShowingRoomLoading = false
+                    }
+                }
             }
             .navigationDestination(isPresented: $isShowingScannedModels) {
                 ScannedModelsView()
@@ -209,6 +221,14 @@ struct HomeView: View {
 
     private var activeSearchQuery: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func beginRoomEntry(_ room: Room) {
+        loadingRoomName = room.name
+        isShowingRoomLoading = true
+        DispatchQueue.main.async {
+            selectedRoom = room
+        }
     }
 
     private var header: some View {
@@ -660,6 +680,10 @@ struct RoomObjectListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ScannedModel.updatedAt, order: .reverse) private var scannedModels: [ScannedModel]
     let room: Room
+    @State private var isShowingEmptyNameAlert = false
+    @State private var lastFocusedItemID: UUID?
+    @State private var itemIDToRefocusAfterAlert: UUID?
+    @FocusState private var focusedItemID: UUID?
 
     private var sortedEntries: [RoomObjectListEntry] {
         room.shelves
@@ -695,7 +719,8 @@ struct RoomObjectListView: View {
                                 shelfName: entry.shelf.name,
                                 item: entry.item,
                                 fallbackName: entry.fallbackName,
-                                modelThumbnailData: modelThumbnailData(for: entry.item.modelPath)
+                                modelThumbnailData: modelThumbnailData(for: entry.item.modelPath),
+                                focusedItemID: $focusedItemID
                             )
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
@@ -711,13 +736,35 @@ struct RoomObjectListView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") {
-                        saveChanges()
-                        dismiss()
+                        if saveChanges() {
+                            dismiss()
+                        }
                     }
                 }
             }
             .onDisappear {
-                saveChanges()
+                _ = saveChanges()
+            }
+            .onChange(of: focusedItemID) { _, newValue in
+                defer { lastFocusedItemID = newValue }
+
+                guard newValue == nil,
+                      let lastFocusedItemID,
+                      let item = item(for: lastFocusedItemID),
+                      (item.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
+                    return
+                }
+
+                itemIDToRefocusAfterAlert = lastFocusedItemID
+                isShowingEmptyNameAlert = true
+            }
+            .alert("オブジェクト名を入力してください", isPresented: $isShowingEmptyNameAlert) {
+                Button("OK", role: .cancel) {
+                    let itemID = itemIDToRefocusAfterAlert
+                    DispatchQueue.main.async {
+                        focusedItemID = itemID
+                    }
+                }
             }
         }
     }
@@ -740,9 +787,29 @@ struct RoomObjectListView: View {
         .background(AppColors.groupedBackground)
     }
 
-    private func saveChanges() {
+    private func saveChanges() -> Bool {
+        guard hasUnfilledObjectName == false else {
+            isShowingEmptyNameAlert = true
+            return false
+        }
+
         room.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private var hasUnfilledObjectName: Bool {
+        sortedEntries.contains { entry in
+            entry.item.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        }
+    }
+
+    private func item(for id: UUID) -> PlacedItem? {
+        room.shelves.flatMap(\.items).first { $0.id == id }
     }
 
     private func modelThumbnailData(for modelPath: String?) -> Data? {
@@ -760,6 +827,7 @@ struct RoomObjectRow: View {
     @Bindable var item: PlacedItem
     let fallbackName: String
     let modelThumbnailData: Data?
+    let focusedItemID: FocusState<UUID?>.Binding
 
     var body: some View {
         HStack(spacing: 12) {
@@ -770,10 +838,11 @@ struct RoomObjectRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(AppColors.textMuted)
 
-                TextField(fallbackName, text: displayNameBinding)
+                TextField("", text: displayNameBinding, prompt: Text(fallbackName))
                     .font(.body.weight(.semibold))
                     .foregroundStyle(AppColors.textPrimary)
                     .textFieldStyle(.plain)
+                    .focused(focusedItemID, equals: item.id)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -794,10 +863,10 @@ struct RoomObjectRow: View {
 
     private var displayNameBinding: Binding<String> {
         Binding(
-            get: { item.displayName?.isEmpty == false ? item.displayName ?? fallbackName : fallbackName },
+            get: { item.displayName ?? "" },
             set: { newValue in
                 let trimmedValue = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                item.displayName = trimmedValue.isEmpty ? nil : newValue
+                item.displayName = trimmedValue.isEmpty ? nil : trimmedValue
             }
         )
     }

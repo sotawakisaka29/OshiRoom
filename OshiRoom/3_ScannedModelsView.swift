@@ -97,6 +97,8 @@ struct ScannedModelsView: View {
 					selectedModel = model
 				} label: {
 					normalRowContent(for: model)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.contentShape(Rectangle())
 				}
 				.buttonStyle(.plain)
 			}
@@ -135,6 +137,7 @@ struct ScannedModelsView: View {
 		}
 		.frame(maxWidth: .infinity, minHeight: 104, alignment: .center)
 		.padding(.vertical, 12)
+		.contentShape(Rectangle())
 	}
 
 	@ViewBuilder

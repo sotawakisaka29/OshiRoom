@@ -1,5 +1,6 @@
 import ARKit
 import CryptoKit
+import Photos
 import RealityKit
 import SwiftData
 import SwiftUI
@@ -10,12 +11,14 @@ struct ARShelfRealityView: UIViewRepresentable {
     let viewModel: ARShelfViewModel
     let modelContext: ModelContext
     let isInterfaceHidden: Bool
+    let onReady: () -> Void
     let onRequestShowInterface: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             viewModel: viewModel,
             isInterfaceHidden: isInterfaceHidden,
+            onReady: onReady,
             onRequestShowInterface: onRequestShowInterface
         )
     }
@@ -28,12 +31,15 @@ struct ARShelfRealityView: UIViewRepresentable {
         context.coordinator.viewModel = viewModel
         context.coordinator.modelContext = modelContext
         context.coordinator.isInterfaceHidden = isInterfaceHidden
+        context.coordinator.onReady = onReady
         context.coordinator.onRequestShowInterface = onRequestShowInterface
         context.coordinator.updateMode(viewModel.mode)
+        context.coordinator.reloadSceneIfNeeded(in: uiView)
         context.coordinator.syncShelvesIfNeeded(in: uiView)
         context.coordinator.consumePendingGoodsIfNeeded()
         context.coordinator.deleteIfNeeded(modelContext: modelContext)
         context.coordinator.saveIfNeeded(modelContext: modelContext)
+        context.coordinator.notifyReadyIfNeeded()
     }
 
     static func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
@@ -44,6 +50,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         var viewModel: ARShelfViewModel
         var modelContext: ModelContext?
         var isInterfaceHidden: Bool
+        var onReady: () -> Void
         var onRequestShowInterface: () -> Void
         private weak var arView: ARView?
         private var anchorEntities: [UUID: AnchorEntity] = [:]
@@ -74,15 +81,20 @@ struct ARShelfRealityView: UIViewRepresentable {
         private var handledPendingGoodsID: UUID?
         private var handledSaveRequestToken = 0
         private var handledDeleteRequestToken = 0
+        private var handledSceneReloadRequestToken = 0
+        private var didNotifyReady = false
+        private var activeItemGestureCount = 0
         private var isCapturingWorldMap = false
 
         init(
             viewModel: ARShelfViewModel,
             isInterfaceHidden: Bool,
+            onReady: @escaping () -> Void,
             onRequestShowInterface: @escaping () -> Void
         ) {
             self.viewModel = viewModel
             self.isInterfaceHidden = isInterfaceHidden
+            self.onReady = onReady
             self.onRequestShowInterface = onRequestShowInterface
         }
 
@@ -102,6 +114,11 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
             arView.addGestureRecognizer(tapGesture)
+
+            let saveLongPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleSaveLongPress(_:)))
+            saveLongPressGesture.minimumPressDuration = 0.55
+            saveLongPressGesture.allowableMovement = 12
+            arView.addGestureRecognizer(saveLongPressGesture)
 
             let heightPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleHeightPan(_:)))
             heightPanGesture.maximumNumberOfTouches = 1
@@ -164,6 +181,16 @@ struct ARShelfRealityView: UIViewRepresentable {
             captureWorldMapIfPossible(modelContext: modelContext)
         }
 
+        func reloadSceneIfNeeded(in arView: ARView) {
+            guard handledSceneReloadRequestToken != viewModel.sceneReloadRequestToken else {
+                return
+            }
+
+            handledSceneReloadRequestToken = viewModel.sceneReloadRequestToken
+            didNotifyReady = false
+            clearSceneContent()
+        }
+
         func persistBeforeDismiss() {
             guard let modelContext else {
                 return
@@ -183,6 +210,7 @@ struct ARShelfRealityView: UIViewRepresentable {
             handledDeleteRequestToken = viewModel.deleteRequestToken
             let targetsToDelete = viewModel.activeSelectionTargets
             if targetsToDelete.isEmpty == false {
+                viewModel.captureUndoSnapshot(includeImageData: true)
                 deleteSelectedEntities(for: targetsToDelete)
                 clearSelectionOutline()
                 syncTransformsToModel()
@@ -205,6 +233,7 @@ struct ARShelfRealityView: UIViewRepresentable {
             itemCollisionCenters[itemID] = nil
             itemGestureRecognizers[itemID]?.forEach { $0.isEnabled = false }
             itemGestureRecognizers[itemID] = nil
+            activeItemGestureCount = 0
         }
 
         private func deleteSelectedShelfEntity(_ shelf: Shelf) {
@@ -317,18 +346,19 @@ struct ARShelfRealityView: UIViewRepresentable {
                 return
             }
 
-            let point = gesture.location(in: arView)
-            if isInterfaceHidden, arView.entity(at: point) == nil {
+            if isInterfaceHidden {
                 onRequestShowInterface()
                 return
             }
 
+            let point = gesture.location(in: arView)
             if let pendingShelf = viewModel.pendingShelf {
                 guard let result = arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first else {
                     viewModel.statusMessage = "床がまだ見つかっていません。ゆっくり部屋を映してください。"
                     return
                 }
 
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 placeShelf(pendingShelf, with: result.worldTransform, in: arView)
                 pendingShelf.anchorTransformData = MatrixCoder.encode(result.worldTransform)
                 pendingShelf.updatedAt = .now
@@ -342,6 +372,76 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             if shelfEntities.isEmpty == false {
                 selectObject(at: point, in: arView)
+            }
+        }
+
+        @objc private func handleSaveLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began,
+                  isInterfaceHidden,
+                  let arView else {
+                return
+            }
+
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+            viewModel.statusMessage = "スクリーンショットを保存しています..."
+
+            arView.snapshot(saveToHDR: false) { [weak self] image in
+                guard let self else {
+                    return
+                }
+
+                guard let image else {
+                    DispatchQueue.main.async {
+                        self.viewModel.statusMessage = "スクリーンショットを取得できませんでした。"
+                    }
+                    return
+                }
+
+                self.saveSnapshotToPhotos(image)
+            }
+        }
+
+        private func saveSnapshotToPhotos(_ image: UIImage) {
+            let saveImage = image.normalizedForRendering()
+            let performSave = { [weak self] in
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAsset(from: saveImage)
+                }) { success, error in
+                    DispatchQueue.main.async {
+                        guard let self else {
+                            return
+                        }
+
+                        if success {
+                            self.viewModel.statusMessage = "スクリーンショットを写真に保存しました。"
+                        } else if let error {
+                            self.viewModel.statusMessage = "スクリーンショットを保存できませんでした: \(error.localizedDescription)"
+                        } else {
+                            self.viewModel.statusMessage = "スクリーンショットを保存できませんでした。"
+                        }
+                    }
+                }
+            }
+
+            switch PHPhotoLibrary.authorizationStatus(for: .addOnly) {
+            case .authorized, .limited:
+                performSave()
+            case .notDetermined:
+                PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                    switch status {
+                    case .authorized, .limited:
+                        performSave()
+                    default:
+                        DispatchQueue.main.async {
+                            self.viewModel.statusMessage = "写真への保存権限がありません。"
+                        }
+                    }
+                }
+            default:
+                DispatchQueue.main.async {
+                    self.viewModel.statusMessage = "写真への保存権限がありません。"
+                }
             }
         }
 
@@ -369,6 +469,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 heightPanStartY = targetEntity.position.y
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
@@ -406,6 +507,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 rotationPanStartOrientation = targetEntity.orientation
             case .changed:
                 guard let startOrientation = rotationPanStartOrientation else {
@@ -433,6 +535,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 shelfGroupPanStartPositions = currentShelfLocalPositions()
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
@@ -467,6 +570,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 goodsGroupPanStartPositions = currentItemLocalPositions()
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
@@ -495,6 +599,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         private func handleShelfGroupHeightPan(_ gesture: UIPanGestureRecognizer) {
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 shelfGroupHeightStartPositions = currentShelfLocalPositions()
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
@@ -521,6 +626,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         private func handleGoodsGroupHeightPan(_ gesture: UIPanGestureRecognizer) {
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 goodsGroupHeightStartPositions = currentItemLocalPositions()
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
@@ -547,6 +653,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         private func handleShelfGroupRotationPan(_ gesture: UIPanGestureRecognizer) {
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 shelfGroupRotationStartOrientations = currentShelfLocalOrientations()
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
@@ -572,6 +679,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         private func handleGoodsGroupRotationPan(_ gesture: UIPanGestureRecognizer) {
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 goodsGroupRotationStartOrientations = currentItemLocalOrientations()
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
@@ -609,6 +717,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 goodsPinchStartScale = targetEntity.scale
             case .changed:
                 guard let startScale = goodsPinchStartScale else {
@@ -635,6 +744,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
+                viewModel.captureUndoSnapshot(includeImageData: false)
                 goodsGroupScaleStartScales = currentItemLocalScales()
             case .changed:
                 for (itemID, startScale) in goodsGroupScaleStartScales {
@@ -822,7 +932,9 @@ struct ARShelfRealityView: UIViewRepresentable {
             itemCollisionCenters[item.id] = .zero
 
             if installGestures, let arView {
-                itemGestureRecognizers[item.id] = arView.installGestures([.translation, .rotation, .scale], for: entity)
+                let recognizers = arView.installGestures([.translation, .rotation, .scale], for: entity)
+                itemGestureRecognizers[item.id] = recognizers
+                registerItemUndoTracking(recognizers: recognizers)
                 updateCollisionAvailability()
                 updateGestureAvailability()
             }
@@ -847,9 +959,35 @@ struct ARShelfRealityView: UIViewRepresentable {
             itemCollisionCenters[item.id] = modelGoods.collisionCenter
 
             if installGestures, let arView {
-                itemGestureRecognizers[item.id] = arView.installGestures([.translation, .rotation, .scale], for: entity)
+                let recognizers = arView.installGestures([.translation, .rotation, .scale], for: entity)
+                itemGestureRecognizers[item.id] = recognizers
+                registerItemUndoTracking(recognizers: recognizers)
                 updateCollisionAvailability()
                 updateGestureAvailability()
+            }
+        }
+
+        private func registerItemUndoTracking(recognizers: [EntityGestureRecognizer]) {
+            for recognizer in recognizers {
+                recognizer.addTarget(self, action: #selector(handleItemEntityGesture(_:)))
+            }
+        }
+
+        @objc private func handleItemEntityGesture(_ gesture: UIGestureRecognizer) {
+            switch gesture.state {
+            case .began:
+                if activeItemGestureCount == 0 {
+                    viewModel.captureUndoSnapshot(includeImageData: false)
+                }
+                activeItemGestureCount += 1
+            case .ended, .cancelled, .failed:
+                activeItemGestureCount = max(activeItemGestureCount - 1, 0)
+                if activeItemGestureCount == 0 {
+                    syncTransformsToModel()
+                    viewModel.requestSave()
+                }
+            default:
+                break
             }
         }
 
@@ -982,6 +1120,7 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
 
             clearSelectionOutline()
+            var didAddOutline = false
 
             for target in outlineTargets {
                 switch target {
@@ -997,6 +1136,7 @@ struct ARShelfRealityView: UIViewRepresentable {
                     )
                     shelfEntity.addChild(outline)
                     selectionOutlines.append(outline)
+                    didAddOutline = true
                 case let .item(itemID):
                     guard let itemEntity = itemEntities[itemID],
                           let item = viewModel.room.shelves.flatMap(\.items).first(where: { $0.id == itemID }) else {
@@ -1013,9 +1153,16 @@ struct ARShelfRealityView: UIViewRepresentable {
                     )
                     itemEntity.addChild(outline)
                     selectionOutlines.append(outline)
+                    didAddOutline = true
                 case .allShelves:
                     continue
                 }
+            }
+
+            guard didAddOutline else {
+                outlinedTarget = nil
+                outlinedSelectionTargets.removeAll()
+                return
             }
 
             outlinedTarget = viewModel.selectedTarget
@@ -1145,14 +1292,64 @@ struct ARShelfRealityView: UIViewRepresentable {
                 shelf.updatedAt = .now
             }
         }
+
+        private func clearSceneContent() {
+            shelfGestureRecognizers.values.flatMap { $0 }.forEach { $0.isEnabled = false }
+            itemGestureRecognizers.values.flatMap { $0 }.forEach { $0.isEnabled = false }
+
+            anchorEntities.values.forEach { $0.removeFromParent() }
+            anchorEntities.removeAll()
+            shelfEntities.removeAll()
+            itemEntities.removeAll()
+            itemCollisionSizes.removeAll()
+            itemCollisionCenters.removeAll()
+            shelfGestureRecognizers.removeAll()
+            itemGestureRecognizers.removeAll()
+            shelfGroupPanGesture?.isEnabled = false
+            goodsGroupPanGesture?.isEnabled = false
+            heightPanGesture?.isEnabled = false
+            rotationPanGesture?.isEnabled = false
+            goodsPinchGesture?.isEnabled = false
+            shelfGroupPanStartPositions.removeAll()
+            goodsGroupPanStartPositions.removeAll()
+            shelfGroupHeightStartPositions.removeAll()
+            goodsGroupHeightStartPositions.removeAll()
+            shelfGroupRotationStartOrientations.removeAll()
+            goodsGroupRotationStartOrientations.removeAll()
+            goodsGroupScaleStartScales.removeAll()
+            selectionOutlines.forEach { $0.removeFromParent() }
+            selectionOutlines.removeAll()
+            outlinedTarget = nil
+            outlinedSelectionTargets.removeAll()
+            activeItemGestureCount = 0
+        }
+
+        func notifyReadyIfNeeded() {
+            guard didNotifyReady == false else {
+                return
+            }
+
+            didNotifyReady = true
+            onReady()
+        }
     }
 }
 
 /// テンプレートごとの仮棚Entityを作ります。
 enum ShelfEntityFactory {
     static let collisionSize = SIMD3<Float>(0.82, 0.28, 0.2)
+    private static let shelfEntityCache: NSCache<NSString, ModelEntity> = {
+        let cache = NSCache<NSString, ModelEntity>()
+        cache.countLimit = 8
+        return cache
+    }()
 
     static func makeShelf(template: ShelfTemplate) -> ModelEntity {
+        let cacheKey = template.rawValue as NSString
+        if let cachedEntity = shelfEntityCache.object(forKey: cacheKey) {
+            return cachedEntity.clone(recursive: true)
+        }
+
         let root = ModelEntity()
         root.components.set(CollisionComponent(shapes: [.generateBox(size: collisionSize)]))
 
@@ -1172,7 +1369,8 @@ enum ShelfEntityFactory {
             addBoard(to: root, position: [0, 0.15, 0], size: [0.72, 0.025, 0.14], color: UIColor(red: 0.70, green: 0.66, blue: 0.58, alpha: 1))
         }
 
-        return root
+        shelfEntityCache.setObject(root, forKey: cacheKey)
+        return root.clone(recursive: true)
     }
 
     private static func addBoard(
@@ -1199,7 +1397,7 @@ enum ShelfEntityFactory {
 enum GoodsEntityFactory {
     private static let goodsEntityCache: NSCache<NSString, ModelEntity> = {
         let cache = NSCache<NSString, ModelEntity>()
-        cache.countLimit = 40
+        cache.countLimit = 24
         return cache
     }()
 
@@ -1228,7 +1426,7 @@ enum GoodsEntityFactory {
 
         let resolvedCacheKey = cacheKey ?? makeImageCacheKey(for: image)
         goodsEntityCache.setObject(root, forKey: resolvedCacheKey as NSString)
-        return root
+        return root.clone(recursive: true)
     }
 
     static func makeGoodsEntity(image: UIImage) -> ModelEntity {
@@ -1249,9 +1447,11 @@ enum GoodsEntityFactory {
 
     static func size(for image: UIImage) -> SIMD3<Float> {
         let normalizedImage = image.normalizedForRendering()
-        let height: Float = 0.10
         let aspectRatio = Float(normalizedImage.size.width / max(normalizedImage.size.height, 1))
-        let width = max(height * aspectRatio, 0.06)
+        let aspectScale = sqrt(max(aspectRatio, 0.01))
+        let baseSide: Float = 0.10
+        let width = min(max(baseSide * aspectScale, 0.06), 0.18)
+        let height = min(max(baseSide / aspectScale, 0.06), 0.18)
         let depth: Float = 0.015
         return SIMD3<Float>(width, height, depth)
     }
@@ -1695,9 +1895,19 @@ private struct MeshBuilder {
 /// 保存済みUSDZを棚に置きやすいサイズの3DグッズEntityへ変換します。
 enum ModelGoodsEntityFactory {
     static let defaultCollisionSize = SIMD3<Float>(0.14, 0.14, 0.14)
+    private static let modelEntityCache: NSCache<NSString, CachedModelGoodsEntity> = {
+        let cache = NSCache<NSString, CachedModelGoodsEntity>()
+        cache.countLimit = 8
+        return cache
+    }()
 
     @MainActor
     static func makeModelEntity(url: URL) -> ModelGoodsEntity? {
+        let cacheKey = url.standardizedFileURL.path as NSString
+        if let cachedEntity = modelEntityCache.object(forKey: cacheKey) {
+            return cachedEntity.makeValue()
+        }
+
         guard let loadedEntity = try? Entity.load(contentsOf: url) else {
             return nil
         }
@@ -1743,8 +1953,31 @@ enum ModelGoodsEntityFactory {
             ])
         )
         root.addChild(loadedEntity)
-        return ModelGoodsEntity(
+        let value = ModelGoodsEntity(
             entity: root,
+            collisionSize: collisionSize,
+            collisionCenter: collisionCenter
+        )
+        let cachedValue = CachedModelGoodsEntity(value: value)
+        modelEntityCache.setObject(cachedValue, forKey: cacheKey)
+        return cachedValue.makeValue()
+    }
+}
+
+final class CachedModelGoodsEntity: NSObject {
+    private let entity: ModelEntity
+    private let collisionSize: SIMD3<Float>
+    private let collisionCenter: SIMD3<Float>
+
+    init(value: ModelGoodsEntity) {
+        entity = value.entity
+        collisionSize = value.collisionSize
+        collisionCenter = value.collisionCenter
+    }
+
+    func makeValue() -> ModelGoodsEntity {
+        ModelGoodsEntity(
+            entity: entity.clone(recursive: true),
             collisionSize: collisionSize,
             collisionCenter: collisionCenter
         )

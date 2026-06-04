@@ -11,6 +11,54 @@ enum ARShelfSelectionTarget: Equatable, Hashable {
     case allShelves
 }
 
+/// 直前の編集を元に戻すためのスナップショットです。
+struct ARShelfUndoSnapshot {
+    var room: ARShelfRoomSnapshot
+    var mode: ARInteractionMode
+    var selectedTarget: ARShelfSelectionTarget?
+    var isMultipleSelectionActive: Bool
+    var multiSelectionTargets: Set<ARShelfSelectionTarget>
+    var shelfMoveMode: ShelfMoveMode
+    var goodsMoveMode: ShelfMoveMode
+}
+
+struct ARShelfRoomSnapshot {
+    var shelves: [ARShelfShelfSnapshot]
+}
+
+struct ARShelfShelfSnapshot {
+    var id: UUID
+    var name: String
+    var templateRawValue: String
+    var thumbnailData: Data?
+    var displayOrder: Int
+    var createdAt: Date
+    var updatedAt: Date
+    var anchorTransformData: Data?
+    var items: [ARShelfItemSnapshot]
+}
+
+struct ARShelfItemSnapshot {
+    var id: UUID
+    var imagePath: String
+    var imageData: Data?
+    var modelPath: String?
+    var contentTypeRawValue: String
+    var displayName: String?
+    var positionX: Float
+    var positionY: Float
+    var positionZ: Float
+    var rotationX: Float
+    var rotationY: Float
+    var rotationZ: Float
+    var rotationW: Float
+    var scaleX: Float
+    var scaleY: Float
+    var scaleZ: Float
+    var slotIndex: Int
+    var createdAt: Date
+}
+
 /// AR配置画面の状態を管理し、SwiftDataへ保存するViewModelです。
 @Observable
 final class ARShelfViewModel {
@@ -22,16 +70,19 @@ final class ARShelfViewModel {
     var isProcessing = false
     var saveRequestToken = 0
     var deleteRequestToken = 0
+    var sceneReloadRequestToken = 0
     var selectedTarget: ARShelfSelectionTarget?
     var isMultipleSelectionActive = false
     var multiSelectionTargets: Set<ARShelfSelectionTarget> = []
     var shelfMoveMode: ShelfMoveMode = .horizontalPlane
     var goodsMoveMode: ShelfMoveMode = .horizontalPlane
+    private var undoSnapshots: [ARShelfUndoSnapshot] = []
 
     init(room: Room) {
         self.room = room
+        mode = room.shelves.contains(where: { $0.anchorTransformData != nil }) ? .shelfEdit : .placement
         self.statusMessage = room.shelves.contains(where: { $0.anchorTransformData != nil })
-            ? "棚を選ぶか、「棚を追加」で新しい棚を置けます。"
+            ? "棚をタップして選択できます。必要なら「棚を追加」でも新しい棚を置けます。"
             : "「棚を追加」を押して、最初の棚を置いてみましょう。"
     }
 
@@ -127,6 +178,10 @@ final class ARShelfViewModel {
         hasActiveSelection
     }
 
+    var canUndo: Bool {
+        undoSnapshots.isEmpty == false
+    }
+
     var isAllShelvesSelectionActive: Bool {
         selectedTarget == .allShelves
     }
@@ -176,6 +231,7 @@ final class ARShelfViewModel {
     }
 
     func addShelf(template: ShelfTemplate, modelContext: ModelContext) {
+        let undoSnapshot = makeUndoSnapshot(includeImageData: false)
         let shelf = Shelf(
             name: nextShelfName(for: template),
             template: template,
@@ -187,6 +243,7 @@ final class ARShelfViewModel {
 
         do {
             try modelContext.save()
+            pushUndoSnapshot(undoSnapshot)
             pendingShelfID = shelf.id
             selectedTarget = nil
             mode = .placement
@@ -236,6 +293,7 @@ final class ARShelfViewModel {
             return
         }
 
+        let undoSnapshot = makeUndoSnapshot(includeImageData: false)
         let slotIndex = nextAvailableSlotIndex(in: shelf)
         let backwardTilt = simd_quatf(angle: -Float.pi / 12, axis: SIMD3<Float>(1, 0, 0))
         let transform = TransformSnapshot(position: slotPosition(for: slotIndex), rotation: backwardTilt)
@@ -257,6 +315,7 @@ final class ARShelfViewModel {
         multiSelectionTargets.removeAll()
         selectedTarget = .item(item.id)
         statusMessage = "グッズを棚へ配置しました"
+        pushUndoSnapshot(undoSnapshot)
     }
 
     func selectShelfForGoodsInsertion(id: UUID) {
@@ -288,6 +347,7 @@ final class ARShelfViewModel {
             return
         }
 
+        let undoSnapshot = makeUndoSnapshot(includeImageData: false)
         let slotIndex = nextAvailableSlotIndex(in: shelf)
         let transform = TransformSnapshot(
             position: modelSlotPosition(for: slotIndex),
@@ -297,7 +357,7 @@ final class ARShelfViewModel {
             imagePath: "",
             modelPath: modelPath,
             contentType: .model3D,
-            displayName: model.name,
+            displayName: snapshotDisplayName(for: model),
             transform: transform,
             slotIndex: slotIndex,
             shelf: shelf
@@ -313,6 +373,12 @@ final class ARShelfViewModel {
         multiSelectionTargets.removeAll()
         selectedTarget = .item(item.id)
         statusMessage = "3Dモデルを棚へ配置しました"
+        pushUndoSnapshot(undoSnapshot)
+    }
+
+    private func snapshotDisplayName(for model: ScannedModel) -> String? {
+        let trimmedName = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedName.isEmpty ? nil : trimmedName
     }
 
     func selectItem(id: UUID?) {
@@ -667,6 +733,141 @@ final class ARShelfViewModel {
         saveRequestToken += 1
     }
 
+    func requestSceneReload() {
+        sceneReloadRequestToken += 1
+    }
+
+    func undoLastEdit(modelContext: ModelContext) -> Bool {
+        guard let snapshot = undoSnapshots.popLast() else {
+            statusMessage = "元に戻せる編集がありません。"
+            return false
+        }
+
+        restore(snapshot: snapshot, modelContext: modelContext)
+        requestSceneReload()
+        statusMessage = "直前の編集を元に戻しました。"
+        return true
+    }
+
+    func captureUndoSnapshot(includeImageData: Bool) {
+        undoSnapshots.append(makeUndoSnapshot(includeImageData: includeImageData))
+        if undoSnapshots.count > 30 {
+            undoSnapshots.removeFirst(undoSnapshots.count - 30)
+        }
+    }
+
+    private func pushUndoSnapshot(_ snapshot: ARShelfUndoSnapshot) {
+        undoSnapshots.append(snapshot)
+        if undoSnapshots.count > 30 {
+            undoSnapshots.removeFirst(undoSnapshots.count - 30)
+        }
+    }
+
+    private func makeUndoSnapshot(includeImageData: Bool) -> ARShelfUndoSnapshot {
+        ARShelfUndoSnapshot(
+            room: ARShelfRoomSnapshot(shelves: room.shelves.map { shelf in
+                ARShelfShelfSnapshot(
+                    id: shelf.id,
+                    name: shelf.name,
+                    templateRawValue: shelf.templateRawValue,
+                    thumbnailData: shelf.thumbnailData,
+                    displayOrder: shelf.displayOrder,
+                    createdAt: shelf.createdAt,
+                    updatedAt: shelf.updatedAt,
+                    anchorTransformData: shelf.anchorTransformData,
+                    items: shelf.items.map { item in
+                        ARShelfItemSnapshot(
+                            id: item.id,
+                            imagePath: item.imagePath,
+                            imageData: includeImageData ? ImageStore.load(path: item.imagePath)?.pngData() : nil,
+                            modelPath: item.modelPath,
+                            contentTypeRawValue: item.contentTypeRawValue,
+                            displayName: item.displayName,
+                            positionX: item.positionX,
+                            positionY: item.positionY,
+                            positionZ: item.positionZ,
+                            rotationX: item.rotationX,
+                            rotationY: item.rotationY,
+                            rotationZ: item.rotationZ,
+                            rotationW: item.rotationW,
+                            scaleX: item.scaleX,
+                            scaleY: item.scaleY,
+                            scaleZ: item.scaleZ,
+                            slotIndex: item.slotIndex,
+                            createdAt: item.createdAt
+                        )
+                    }
+                )
+            }),
+            mode: mode,
+            selectedTarget: selectedTarget,
+            isMultipleSelectionActive: isMultipleSelectionActive,
+            multiSelectionTargets: multiSelectionTargets,
+            shelfMoveMode: shelfMoveMode,
+            goodsMoveMode: goodsMoveMode
+        )
+    }
+
+    private func restore(snapshot: ARShelfUndoSnapshot, modelContext: ModelContext) {
+        for shelf in room.shelves {
+            modelContext.delete(shelf)
+        }
+        room.shelves.removeAll()
+
+        for shelfSnapshot in snapshot.room.shelves {
+            let shelf = Shelf(
+                id: shelfSnapshot.id,
+                name: shelfSnapshot.name,
+                template: ShelfTemplate(rawValue: shelfSnapshot.templateRawValue) ?? .wood,
+                thumbnailData: shelfSnapshot.thumbnailData,
+                displayOrder: shelfSnapshot.displayOrder,
+                createdAt: shelfSnapshot.createdAt,
+                updatedAt: shelfSnapshot.updatedAt,
+                anchorTransformData: shelfSnapshot.anchorTransformData,
+                room: room
+            )
+
+            for itemSnapshot in shelfSnapshot.items {
+                if let imageData = itemSnapshot.imageData {
+                    try? ImageStore.save(imageData, path: itemSnapshot.imagePath)
+                }
+
+                let item = PlacedItem(
+                    id: itemSnapshot.id,
+                    imagePath: itemSnapshot.imagePath,
+                    modelPath: itemSnapshot.modelPath,
+                    contentType: PlacedItemContentType(rawValue: itemSnapshot.contentTypeRawValue) ?? .image,
+                    displayName: itemSnapshot.displayName,
+                    transform: TransformSnapshot(
+                        position: SIMD3<Float>(itemSnapshot.positionX, itemSnapshot.positionY, itemSnapshot.positionZ),
+                        rotation: simd_quatf(vector: SIMD4<Float>(itemSnapshot.rotationX, itemSnapshot.rotationY, itemSnapshot.rotationZ, itemSnapshot.rotationW)),
+                        scale: SIMD3<Float>(itemSnapshot.scaleX, itemSnapshot.scaleY, itemSnapshot.scaleZ)
+                    ),
+                    slotIndex: itemSnapshot.slotIndex,
+                    createdAt: itemSnapshot.createdAt,
+                    shelf: shelf
+                )
+                shelf.items.append(item)
+                modelContext.insert(item)
+            }
+
+            room.shelves.append(shelf)
+            modelContext.insert(shelf)
+        }
+
+        pendingGoods = nil
+        pendingShelfID = nil
+        isMultipleSelectionActive = snapshot.isMultipleSelectionActive
+        multiSelectionTargets = snapshot.multiSelectionTargets
+        selectedTarget = snapshot.selectedTarget
+        mode = snapshot.mode
+        shelfMoveMode = snapshot.shelfMoveMode
+        goodsMoveMode = snapshot.goodsMoveMode
+        room.updatedAt = .now
+
+        try? modelContext.save()
+    }
+
     func save(modelContext: ModelContext) -> Bool {
         room.updatedAt = .now
         selectedShelves.forEach { $0.updatedAt = .now }
@@ -775,9 +976,9 @@ enum ARInteractionMode: String, CaseIterable, Identifiable {
         case .placement:
             "配置"
         case .shelfEdit:
-            "棚編集"
+            "棚"
         case .goodsEdit:
-            "グッズ編集"
+            "グッズ"
         }
     }
 

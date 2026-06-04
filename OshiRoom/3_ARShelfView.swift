@@ -9,9 +9,11 @@ struct ARShelfView: View {
     @State private var isShowingGoodsShelfPicker = false
     @State private var isShowingAddShelf = false
     @State private var isInterfaceHidden = false
+    let onReady: () -> Void
 
-    init(room: Room) {
+    init(room: Room, onReady: @escaping () -> Void = {}) {
         _viewModel = State(initialValue: ARShelfViewModel(room: room))
+        self.onReady = onReady
     }
 
     var body: some View {
@@ -20,6 +22,9 @@ struct ARShelfView: View {
                 arPlacementContent
             } else {
                 CameraUsageDescriptionMissingView()
+                    .onAppear {
+                        onReady()
+                    }
             }
         }
         .navigationTitle(viewModel.room.name)
@@ -37,6 +42,7 @@ struct ARShelfView: View {
                 }
             }
         }
+        .statusBarHidden(isInterfaceHidden)
         .toolbar(.hidden, for: .tabBar)
     }
 
@@ -46,6 +52,7 @@ struct ARShelfView: View {
                 viewModel: viewModel,
                 modelContext: modelContext,
                 isInterfaceHidden: isInterfaceHidden,
+                onReady: onReady,
                 onRequestShowInterface: {
                     isInterfaceHidden = false
                 }
@@ -87,10 +94,23 @@ struct ARShelfView: View {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Button {
+                        _ = viewModel.undoLastEdit(modelContext: modelContext)
+                    } label: {
+                        EditorTabItem(
+                            title: "戻す",
+                            symbolName: "arrow.uturn.backward",
+                            isActive: false
+                        )
+                    }
+                    .disabled(viewModel.canUndo == false)
+                    .opacity(viewModel.canUndo ? 1 : 0.5)
+                    .keyboardShortcut("z", modifiers: .command)
+
+                    Button {
                         viewModel.switchMode(.shelfEdit)
                     } label: {
                         EditorTabItem(
-                            title: "棚編集",
+                            title: "棚",
                             symbolName: "shippingbox",
                             isActive: activeEditorMode == .shelfEdit
                         )
@@ -100,7 +120,7 @@ struct ARShelfView: View {
                         viewModel.switchMode(.goodsEdit)
                     } label: {
                         EditorTabItem(
-                            title: "グッズ編集",
+                            title: "グッズ",
                             symbolName: "photo",
                             isActive: activeEditorMode == .goodsEdit
                         )
@@ -110,7 +130,7 @@ struct ARShelfView: View {
                         viewModel.toggleMultipleSelection()
                     } label: {
                         EditorTabItem(
-                            title: "複数選択",
+                            title: "複数",
                             symbolName: "rectangle.3.group",
                             isActive: viewModel.isMultipleSelectionActive
                         )
@@ -218,6 +238,51 @@ struct StatusCapsule: View {
     }
 }
 
+struct RoomEntryLoadingOverlay: View {
+    let roomName: String
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+
+            VStack(spacing: 18) {
+                loadingDoor
+
+                Text("\(roomName)に入室中です")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(AppColors.background)
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 26)
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(AppColors.textPrimary.opacity(0.22))
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(AppColors.background.opacity(0.18), lineWidth: 1)
+            )
+        }
+    }
+
+    private var loadingDoor: some View {
+        TimelineView(.animation) { context in
+            let phase = Int(context.date.timeIntervalSinceReferenceDate * 2) % 2
+            Image(systemName: phase == 0 ? "door.left.hand.closed" : "door.left.hand.open")
+                .font(.system(size: 48, weight: .semibold))
+                .foregroundStyle(AppColors.background)
+                .frame(width: 86, height: 86)
+                .background(
+                    Circle()
+                        .fill(AppColors.textPrimary.opacity(0.28))
+                )
+                .symbolEffect(.pulse, options: .repeating)
+        }
+    }
+}
+
 struct EditorTabItem: View {
     let title: String
     let symbolName: String
@@ -228,7 +293,7 @@ struct EditorTabItem: View {
             Image(systemName: symbolName)
                 .font(.subheadline.weight(.semibold))
             Text(title)
-                .font(.subheadline.weight(.semibold))
+                .font(.caption.weight(.semibold))
         }
         .foregroundStyle(isActive ? AppColors.background : AppColors.textSecondary)
         .frame(maxWidth: .infinity)

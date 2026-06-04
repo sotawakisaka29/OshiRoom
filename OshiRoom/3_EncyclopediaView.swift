@@ -159,38 +159,42 @@ private struct EncyclopediaGridCard: View {
         Button(action: onTap) {
             preview
                 .padding(2)
-            .background(AppColors.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(AppColors.separator, lineWidth: 1)
-            )
+                .background(AppColors.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(AppColors.separator, lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private var preview: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(previewBackgroundStyle)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fit)
-                .matchedGeometryEffect(id: entry.signature, in: namespace)
-                .overlay {
-                    if let image = entry.previewImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .padding(2)
-                            .clipped()
-                    } else {
-                        Image(systemName: entry.previewSymbol)
-                            .font(.system(size: 28, weight: .semibold))
-                            .foregroundStyle(entry.previewSymbolTint)
-                    }
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(previewBackgroundStyle)
+            .frame(maxWidth: .infinity)
+            .aspectRatio(1, contentMode: .fit)
+            .matchedGeometryEffect(
+                id: entry.signature,
+                in: namespace,
+                properties: .frame,
+                anchor: .center
+            )
+            .overlay {
+                if let image = entry.previewImage {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(2)
+                        .clipped()
+                } else {
+                    Image(systemName: entry.previewSymbol)
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(entry.previewSymbolTint)
                 }
-                .clipped()
-        }
+            }
+            .clipped()
     }
 
     private var previewBackgroundStyle: AnyShapeStyle {
@@ -217,7 +221,7 @@ private struct EncyclopediaDetailOverlay: View {
                         commitThumbnailAndClose()
                     }
 
-                VStack(spacing: 18) {
+                VStack(spacing: 16) {
                     HStack {
                         Spacer()
                         Button(action: commitThumbnailAndClose) {
@@ -229,11 +233,16 @@ private struct EncyclopediaDetailOverlay: View {
                         .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                    .padding(.top, 12)
 
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 0)
 
-                    heroStage(width: proxy.size.width, height: proxy.size.height)
+                    HStack {
+                        Spacer(minLength: 0)
+                        heroStage(width: proxy.size.width, height: proxy.size.height)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity)
 
                     VStack(spacing: 6) {
                         Text(entry.title)
@@ -248,7 +257,7 @@ private struct EncyclopediaDetailOverlay: View {
                     }
                     .padding(.horizontal, 24)
 
-                    Spacer(minLength: 16)
+                    Spacer(minLength: 10)
                 }
             }
         }
@@ -271,14 +280,19 @@ private struct EncyclopediaDetailOverlay: View {
 
     @ViewBuilder
     private func heroStage(width: CGFloat, height: CGFloat) -> some View {
-        let stageWidth = min(width - 16, 760)
-        let stageHeight = min(height * 0.74, 860)
+        let stageWidth = min(width - 24, 760)
+        let stageHeight = min(height * 0.72, 840)
 
         RoundedRectangle(cornerRadius: 32, style: .continuous)
             .fill(previewBackgroundStyle)
             .frame(width: stageWidth, height: stageHeight)
-            .shadow(color: .black.opacity(0.06), radius: 20, y: 10)
-            .matchedGeometryEffect(id: entry.signature, in: namespace)
+            .shadow(color: .black.opacity(0.08), radius: 24, y: 12)
+            .matchedGeometryEffect(
+                id: entry.signature,
+                in: namespace,
+                properties: .frame,
+                anchor: .center
+            )
             .overlay {
                 if entry.contentType == .image {
                     imagePreview
@@ -290,7 +304,7 @@ private struct EncyclopediaDetailOverlay: View {
                 RoundedRectangle(cornerRadius: 32, style: .continuous)
                     .stroke(AppColors.separator, lineWidth: 1)
             )
-            .padding(.horizontal, 16)
+            .animation(.spring(response: 0.42, dampingFraction: 0.88), value: entry.signature)
     }
 
     private var previewBackgroundStyle: AnyShapeStyle {
