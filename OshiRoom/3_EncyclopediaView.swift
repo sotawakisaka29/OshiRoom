@@ -360,7 +360,7 @@ private struct EncyclopediaDetailOverlay: View {
         scannedModel.previewTransformSnapshot = transform
 
         if let snapshotImage = modelPreviewController.snapshotCurrentImage(),
-           let thumbnailData = snapshotImage.pngData() {
+           let thumbnailData = snapshotImage.encodedThumbnailData() {
             scannedModel.thumbnailData = thumbnailData
         }
 

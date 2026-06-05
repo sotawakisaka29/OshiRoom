@@ -50,6 +50,16 @@ struct ARShelfRealityView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject {
+        private struct InteractionUpdateState: Equatable {
+            var mode: ARInteractionMode
+            var isInterfaceHidden: Bool
+            var selectedTarget: ARShelfSelectionTarget?
+            var isMultipleSelectionActive: Bool
+            var activeSelectionTargets: [ARShelfSelectionTarget]
+            var shelfMoveMode: ShelfMoveMode
+            var goodsMoveMode: ShelfMoveMode
+        }
+
         var viewModel: ARShelfViewModel
         var modelContext: ModelContext?
         var isInterfaceHidden: Bool
@@ -88,7 +98,10 @@ struct ARShelfRealityView: UIViewRepresentable {
         private var handledSceneReloadRequestToken = 0
         private var didNotifyReady = false
         private var activeItemGestureCount = 0
+        private var activeShelfGestureCount = 0
         private var isCapturingWorldMap = false
+        private var lastWorldMapCaptureDate: Date?
+        private var lastInteractionUpdateState: InteractionUpdateState?
 
         init(
             viewModel: ARShelfViewModel,
@@ -158,6 +171,20 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         func updateMode(_ mode: ARInteractionMode) {
+            let nextState = InteractionUpdateState(
+                mode: mode,
+                isInterfaceHidden: isInterfaceHidden,
+                selectedTarget: viewModel.selectedTarget,
+                isMultipleSelectionActive: viewModel.isMultipleSelectionActive,
+                activeSelectionTargets: viewModel.activeSelectionTargets,
+                shelfMoveMode: viewModel.shelfMoveMode,
+                goodsMoveMode: viewModel.goodsMoveMode
+            )
+            guard lastInteractionUpdateState != nextState else {
+                return
+            }
+
+            lastInteractionUpdateState = nextState
             updateCollisionAvailability()
             updateGestureAvailability()
             updateSelectionOutline()
@@ -170,7 +197,12 @@ struct ARShelfRealityView: UIViewRepresentable {
                     continue
                 }
 
-                placeShelf(shelf, with: matrix, in: arView)
+                // 旧保存値は棚本体の初期180度回転を含んでいるので、読み込み時だけ打ち消します。
+                let correctedMatrix = shelf.anchorTransformVersion == nil
+                    ? matrix * ShelfEntityFactory.savedAnchorCorrectionMatrix
+                    : matrix
+
+                placeShelf(shelf, with: correctedMatrix, in: arView)
                 restoreSavedItems(for: shelf)
             }
         }
@@ -205,7 +237,7 @@ struct ARShelfRealityView: UIViewRepresentable {
             syncTransformsToModel()
             syncShelfTransformsToModel()
             _ = viewModel.save(modelContext: modelContext)
-            captureWorldMapIfPossible(modelContext: modelContext)
+            captureWorldMapIfPossible(modelContext: modelContext, force: true)
         }
 
         func deleteIfNeeded(modelContext: ModelContext) {
@@ -288,8 +320,15 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
         }
 
-        private func captureWorldMapIfPossible(modelContext: ModelContext) {
+        private func captureWorldMapIfPossible(modelContext: ModelContext, force: Bool = false) {
             guard let arView, isCapturingWorldMap == false else {
+                return
+            }
+
+            if force == false,
+               viewModel.room.worldMapData != nil,
+               let lastWorldMapCaptureDate,
+               Date().timeIntervalSince(lastWorldMapCaptureDate) < 20 {
                 return
             }
 
@@ -310,6 +349,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
                     self.viewModel.room.worldMapData = WorldMapCoder.encode(worldMap)
                     self.viewModel.room.updatedAt = .now
+                    self.lastWorldMapCaptureDate = .now
 
                     do {
                         try modelContext.save()
@@ -543,7 +583,8 @@ struct ARShelfRealityView: UIViewRepresentable {
             switch gesture.state {
             case .began:
                 viewModel.captureUndoSnapshot(includeImageData: false)
-                shelfGroupPanStartPositions = currentShelfLocalPositions()
+                shelfGroupPanStartPositions = currentShelfWorldPositions()
+                gesture.setTranslation(.zero, in: gesture.view)
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
                 let delta = SIMD3<Float>(
@@ -552,13 +593,15 @@ struct ARShelfRealityView: UIViewRepresentable {
                     Float(translation.y) * 0.0012
                 )
 
-                for (shelfID, startPosition) in shelfGroupPanStartPositions {
+                for (shelfID, startPosition) in currentShelfWorldPositions() {
                     guard let shelfEntity = shelfEntities[shelfID] else {
                         continue
                     }
 
-                    shelfEntity.position = startPosition + delta
+                    let nextPosition = clampShelfPosition(startPosition + delta)
+                    shelfEntity.setPosition(nextPosition, relativeTo: nil)
                 }
+                gesture.setTranslation(.zero, in: gesture.view)
             case .ended, .cancelled, .failed:
                 shelfGroupPanStartPositions.removeAll()
                 syncShelfTransformsToModel()
@@ -579,6 +622,7 @@ struct ARShelfRealityView: UIViewRepresentable {
             case .began:
                 viewModel.captureUndoSnapshot(includeImageData: false)
                 goodsGroupPanStartPositions = currentItemLocalPositions()
+                gesture.setTranslation(.zero, in: gesture.view)
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
                 let delta = SIMD3<Float>(
@@ -587,13 +631,14 @@ struct ARShelfRealityView: UIViewRepresentable {
                     Float(translation.y) * 0.0012
                 )
 
-                for (itemID, startPosition) in goodsGroupPanStartPositions {
+                for (itemID, startPosition) in currentItemLocalPositions() {
                     guard let itemEntity = itemEntities[itemID] else {
                         continue
                     }
 
-                    itemEntity.position = startPosition + delta
+                    itemEntity.position = clampGoodsPosition(startPosition + delta, for: itemEntity, itemID: itemID)
                 }
+                gesture.setTranslation(.zero, in: gesture.view)
             case .ended, .cancelled, .failed:
                 goodsGroupPanStartPositions.removeAll()
                 syncTransformsToModel()
@@ -731,10 +776,12 @@ struct ARShelfRealityView: UIViewRepresentable {
                     return
                 }
 
-                let nextScale = simd_clamp(startScale * Float(gesture.scale), SIMD3<Float>(repeating: 0.2), SIMD3<Float>(repeating: 4.0))
+                let nextScale = clampGoodsScale(startScale * Float(gesture.scale))
                 targetEntity.scale = nextScale
+                targetEntity.position = clampGoodsPosition(targetEntity.position, for: targetEntity, itemID: selectedItemID)
             case .ended, .cancelled, .failed:
                 goodsPinchStartScale = nil
+                targetEntity.position = clampGoodsPosition(targetEntity.position, for: targetEntity, itemID: selectedItemID)
                 syncTransformsToModel()
                 viewModel.requestSave()
             default:
@@ -759,8 +806,9 @@ struct ARShelfRealityView: UIViewRepresentable {
                         continue
                     }
 
-                    let nextScale = simd_clamp(startScale * Float(gesture.scale), SIMD3<Float>(repeating: 0.2), SIMD3<Float>(repeating: 4.0))
+                    let nextScale = clampGoodsScale(startScale * Float(gesture.scale))
                     itemEntity.scale = nextScale
+                    itemEntity.position = clampGoodsPosition(itemEntity.position, for: itemEntity, itemID: itemID)
                 }
             case .ended, .cancelled, .failed:
                 goodsGroupScaleStartScales.removeAll()
@@ -894,7 +942,9 @@ struct ARShelfRealityView: UIViewRepresentable {
             arView.scene.addAnchor(anchor)
             anchorEntities[shelf.id] = anchor
             shelfEntities[shelf.id] = shelfEntity
-            shelfGestureRecognizers[shelf.id] = arView.installGestures([.translation, .rotation, .scale], for: shelfEntity)
+            let recognizers = arView.installGestures([.translation, .rotation, .scale], for: shelfEntity)
+            shelfGestureRecognizers[shelf.id] = recognizers
+            registerShelfUndoTracking(recognizers: recognizers)
             updateGestureAvailability()
         }
 
@@ -929,9 +979,9 @@ struct ARShelfRealityView: UIViewRepresentable {
             let entity = GoodsEntityFactory.makeGoodsEntity(image: image, cacheKey: item.imagePath)
             let collisionSize = GoodsEntityFactory.size(for: image)
             let snapshot = item.transformSnapshot
-            entity.position = snapshot.position
             entity.orientation = snapshot.quaternion
-            entity.scale = snapshot.scale
+            entity.scale = clampGoodsScale(snapshot.scale)
+            entity.position = clampGoodsPosition(snapshot.position, for: entity, collisionSize: collisionSize)
             entity.name = item.id.uuidString
             shelfEntity.addChild(entity)
             itemEntities[item.id] = entity
@@ -956,9 +1006,14 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             let entity = modelGoods.entity
             let snapshot = item.transformSnapshot
-            entity.position = snapshot.position
             entity.orientation = snapshot.quaternion
-            entity.scale = snapshot.scale
+            entity.scale = clampGoodsScale(snapshot.scale)
+            entity.position = clampGoodsPosition(
+                snapshot.position,
+                for: entity,
+                collisionSize: modelGoods.collisionSize,
+                collisionCenter: modelGoods.collisionCenter
+            )
             entity.name = item.id.uuidString
             shelfEntity.addChild(entity)
             itemEntities[item.id] = entity
@@ -980,6 +1035,39 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
         }
 
+        private func registerShelfUndoTracking(recognizers: [EntityGestureRecognizer]) {
+            for recognizer in recognizers {
+                recognizer.addTarget(self, action: #selector(handleShelfEntityGesture(_:)))
+            }
+        }
+
+        @objc private func handleShelfEntityGesture(_ gesture: UIGestureRecognizer) {
+            switch gesture.state {
+            case .began:
+                if activeShelfGestureCount == 0 {
+                    viewModel.captureUndoSnapshot(includeImageData: false)
+                }
+                activeShelfGestureCount += 1
+            case .changed:
+                clampSelectedShelfPositionIfNeeded()
+                if gesture is UIPinchGestureRecognizer {
+                    clampSelectedShelfScaleIfNeeded()
+                }
+            case .ended, .cancelled, .failed:
+                activeShelfGestureCount = max(activeShelfGestureCount - 1, 0)
+                clampSelectedShelfPositionIfNeeded()
+                if gesture is UIPinchGestureRecognizer {
+                    clampSelectedShelfScaleIfNeeded()
+                }
+                if activeShelfGestureCount == 0 {
+                    syncShelfTransformsToModel()
+                    viewModel.requestSave()
+                }
+            default:
+                break
+            }
+        }
+
         @objc private func handleItemEntityGesture(_ gesture: UIGestureRecognizer) {
             switch gesture.state {
             case .began:
@@ -987,8 +1075,17 @@ struct ARShelfRealityView: UIViewRepresentable {
                     viewModel.captureUndoSnapshot(includeImageData: false)
                 }
                 activeItemGestureCount += 1
+            case .changed:
+                clampSelectedItemPositionIfNeeded()
+                if gesture is UIPinchGestureRecognizer {
+                    clampSelectedItemScaleIfNeeded()
+                }
             case .ended, .cancelled, .failed:
                 activeItemGestureCount = max(activeItemGestureCount - 1, 0)
+                clampSelectedItemPositionIfNeeded()
+                if gesture is UIPinchGestureRecognizer {
+                    clampSelectedItemScaleIfNeeded()
+                }
                 if activeItemGestureCount == 0 {
                     syncTransformsToModel()
                     viewModel.requestSave()
@@ -1221,6 +1318,27 @@ struct ARShelfRealityView: UIViewRepresentable {
             })
         }
 
+        private func currentShelfWorldPositions() -> [UUID: SIMD3<Float>] {
+            let shelfIDs: [UUID]
+            if viewModel.isMultipleSelectionActive {
+                shelfIDs = viewModel.selectedShelfIDs
+            } else if viewModel.isAllShelvesSelectionActive {
+                shelfIDs = viewModel.placedShelves.map(\.id)
+            } else if let selectedShelfID = viewModel.selectedShelfID {
+                shelfIDs = [selectedShelfID]
+            } else {
+                shelfIDs = []
+            }
+
+            return Dictionary(uniqueKeysWithValues: shelfIDs.compactMap { shelfID in
+                guard let shelfEntity = shelfEntities[shelfID] else {
+                    return nil
+                }
+
+                return (shelfID, shelfEntity.position(relativeTo: nil))
+            })
+        }
+
         private func currentShelfLocalOrientations() -> [UUID: simd_quatf] {
             let shelfIDs: [UUID]
             if viewModel.isMultipleSelectionActive {
@@ -1279,6 +1397,8 @@ struct ARShelfRealityView: UIViewRepresentable {
                         continue
                     }
 
+                    entity.scale = clampGoodsScale(entity.scale)
+                    entity.position = clampGoodsPosition(entity.position, for: entity, itemID: item.id)
                     item.transformSnapshot = TransformSnapshot(
                         position: entity.position,
                         rotation: entity.orientation,
@@ -1294,10 +1414,150 @@ struct ARShelfRealityView: UIViewRepresentable {
                     continue
                 }
 
-                let worldTransform = shelfEntity.transformMatrix(relativeTo: nil)
-                shelf.anchorTransformData = MatrixCoder.encode(worldTransform)
+                let anchorTransform = shelfEntity.transformMatrix(relativeTo: nil)
+                    * ShelfEntityFactory.savedAnchorCorrectionMatrix
+                shelf.anchorTransformData = MatrixCoder.encode(anchorTransform)
+                shelf.anchorTransformVersion = 2
                 shelf.updatedAt = .now
             }
+        }
+
+        private func clampSelectedShelfScaleIfNeeded() {
+            if let selectedShelfID = viewModel.selectedShelfID {
+                clampShelfEntityScaleIfNeeded(for: selectedShelfID)
+            }
+        }
+
+        private func clampSelectedShelfPositionIfNeeded() {
+            if let selectedShelfID = viewModel.selectedShelfID {
+                clampShelfEntityPositionIfNeeded(for: selectedShelfID)
+            }
+        }
+
+        private func clampSelectedItemScaleIfNeeded() {
+            if viewModel.isMultipleSelectionActive {
+                for itemID in viewModel.selectedItemIDs {
+                    guard let itemEntity = itemEntities[itemID] else {
+                        continue
+                    }
+
+                    itemEntity.scale = clampGoodsScale(itemEntity.scale)
+                    itemEntity.position = clampGoodsPosition(itemEntity.position, for: itemEntity, itemID: itemID)
+                }
+                return
+            }
+
+            if let selectedItemID = viewModel.selectedItemID,
+               let itemEntity = itemEntities[selectedItemID] {
+                itemEntity.scale = clampGoodsScale(itemEntity.scale)
+                itemEntity.position = clampGoodsPosition(itemEntity.position, for: itemEntity, itemID: selectedItemID)
+            }
+        }
+
+        private func clampSelectedItemPositionIfNeeded() {
+            if viewModel.isMultipleSelectionActive {
+                for itemID in viewModel.selectedItemIDs {
+                    guard let itemEntity = itemEntities[itemID] else {
+                        continue
+                    }
+
+                    itemEntity.position = clampGoodsPosition(itemEntity.position, for: itemEntity, itemID: itemID)
+                }
+                return
+            }
+
+            if let selectedItemID = viewModel.selectedItemID,
+               let itemEntity = itemEntities[selectedItemID] {
+                itemEntity.position = clampGoodsPosition(itemEntity.position, for: itemEntity, itemID: selectedItemID)
+            }
+        }
+
+        private func clampShelfEntityPositionIfNeeded(for shelfID: UUID) {
+            _ = shelfID
+        }
+
+        private func clampShelfEntityScaleIfNeeded(for shelfID: UUID) {
+            guard let shelfEntity = shelfEntities[shelfID] else {
+                return
+            }
+
+            shelfEntity.scale = clampShelfScale(shelfEntity.scale)
+        }
+
+        private func clampShelfPosition(_ position: SIMD3<Float>) -> SIMD3<Float> {
+            position
+        }
+
+        private func clampGoodsPosition(
+            _ position: SIMD3<Float>,
+            for entity: ModelEntity,
+            itemID: UUID? = nil,
+            collisionSize: SIMD3<Float>? = nil,
+            collisionCenter: SIMD3<Float>? = nil
+        ) -> SIMD3<Float> {
+            var clamped = position
+
+            let resolvedItemID = itemID ?? self.itemID(for: entity)
+            let resolvedCollisionSize = collisionSize
+                ?? resolvedItemID.flatMap { itemCollisionSizes[$0] }
+                ?? GoodsEntityFactory.defaultSize
+            let resolvedCollisionCenter = collisionCenter
+                ?? resolvedItemID.flatMap { itemCollisionCenters[$0] }
+                ?? .zero
+            let scaledCollisionSize = resolvedCollisionSize * entity.scale
+            let scaledCollisionCenter = resolvedCollisionCenter * entity.scale
+
+            clamped.x = clampGoodsAxis(
+                position.x,
+                centerOffset: scaledCollisionCenter.x,
+                halfExtent: scaledCollisionSize.x * 0.5,
+                minimum: -0.36,
+                maximum: 0.36
+            )
+            clamped.z = clampGoodsAxis(
+                position.z,
+                centerOffset: scaledCollisionCenter.z,
+                halfExtent: scaledCollisionSize.z * 0.5,
+                minimum: -0.08,
+                maximum: 0.03
+            )
+            return clamped
+        }
+
+        private func clampGoodsAxis(
+            _ value: Float,
+            centerOffset: Float,
+            halfExtent: Float,
+            minimum: Float,
+            maximum: Float
+        ) -> Float {
+            let minimumCenter = minimum + halfExtent
+            let maximumCenter = maximum - halfExtent
+            let centerValue = value + centerOffset
+
+            if minimumCenter > maximumCenter {
+                return ((minimum + maximum) * 0.5) - centerOffset
+            }
+
+            return min(max(centerValue, minimumCenter), maximumCenter) - centerOffset
+        }
+
+        private func clampShelfScale(_ scale: SIMD3<Float>) -> SIMD3<Float> {
+            let minimum: Float = 0.25
+            return SIMD3<Float>(
+                max(scale.x, minimum),
+                max(scale.y, minimum),
+                max(scale.z, minimum)
+            )
+        }
+
+        private func clampGoodsScale(_ scale: SIMD3<Float>) -> SIMD3<Float> {
+            let minimum: Float = 0.45
+            return SIMD3<Float>(
+                max(scale.x, minimum),
+                max(scale.y, minimum),
+                max(scale.z, minimum)
+            )
         }
 
         private func clearSceneContent() {
@@ -1329,6 +1589,8 @@ struct ARShelfRealityView: UIViewRepresentable {
             outlinedTarget = nil
             outlinedSelectionTargets.removeAll()
             activeItemGestureCount = 0
+            activeShelfGestureCount = 0
+            lastInteractionUpdateState = nil
         }
 
         func notifyReadyIfNeeded() {
@@ -1345,9 +1607,16 @@ struct ARShelfRealityView: UIViewRepresentable {
 /// テンプレートごとの仮棚Entityを作ります。
 enum ShelfEntityFactory {
     static let collisionSize = SIMD3<Float>(0.82, 0.28, 0.2)
+    // 棚モデルの初期向きが180度回転なので、保存時/旧データ読み込み時に補正します。
+    static let savedAnchorCorrectionMatrix = simd_float4x4(
+        SIMD4<Float>(-1, 0, 0, 0),
+        SIMD4<Float>(0, 1, 0, 0),
+        SIMD4<Float>(0, 0, -1, 0),
+        SIMD4<Float>(0, 0, 0, 1)
+    )
     private static let shelfEntityCache: NSCache<NSString, ModelEntity> = {
         let cache = NSCache<NSString, ModelEntity>()
-        cache.countLimit = 8
+        cache.countLimit = 4
         return cache
     }()
 
@@ -1358,6 +1627,7 @@ enum ShelfEntityFactory {
         }
 
         let root = ModelEntity()
+        root.orientation = simd_quatf(angle: .pi, axis: [0, 1, 0])
         root.components.set(CollisionComponent(shapes: [.generateBox(size: collisionSize)]))
 
         switch template {
@@ -1404,7 +1674,7 @@ enum ShelfEntityFactory {
 enum GoodsEntityFactory {
     private static let goodsEntityCache: NSCache<NSString, ModelEntity> = {
         let cache = NSCache<NSString, ModelEntity>()
-        cache.countLimit = 24
+        cache.countLimit = 8
         return cache
     }()
 
@@ -1904,7 +2174,7 @@ enum ModelGoodsEntityFactory {
     static let defaultCollisionSize = SIMD3<Float>(0.14, 0.14, 0.14)
     private static let modelEntityCache: NSCache<NSString, CachedModelGoodsEntity> = {
         let cache = NSCache<NSString, CachedModelGoodsEntity>()
-        cache.countLimit = 8
+        cache.countLimit = 4
         return cache
     }()
 

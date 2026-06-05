@@ -35,6 +35,7 @@ struct ARShelfShelfSnapshot {
     var createdAt: Date
     var updatedAt: Date
     var anchorTransformData: Data?
+    var anchorTransformVersion: Int?
     var items: [ARShelfItemSnapshot]
 }
 
@@ -296,7 +297,11 @@ final class ARShelfViewModel {
         let undoSnapshot = makeUndoSnapshot(includeImageData: false)
         let slotIndex = nextAvailableSlotIndex(in: shelf)
         let backwardTilt = simd_quatf(angle: -Float.pi / 12, axis: SIMD3<Float>(1, 0, 0))
-        let transform = TransformSnapshot(position: slotPosition(for: slotIndex), rotation: backwardTilt)
+        let forwardFacing = simd_quatf(angle: .pi, axis: SIMD3<Float>(0, 1, 0))
+        let transform = TransformSnapshot(
+            position: slotPosition(for: slotIndex),
+            rotation: forwardFacing * backwardTilt
+        )
         let item = PlacedItem(
             imagePath: imagePath,
             displayName: "オブジェクト\(slotIndex + 1)",
@@ -349,8 +354,10 @@ final class ARShelfViewModel {
 
         let undoSnapshot = makeUndoSnapshot(includeImageData: false)
         let slotIndex = nextAvailableSlotIndex(in: shelf)
+        let forwardFacing = simd_quatf(angle: .pi, axis: SIMD3<Float>(0, 1, 0))
         let transform = TransformSnapshot(
             position: modelSlotPosition(for: slotIndex),
+            rotation: forwardFacing,
             scale: SIMD3<Float>(repeating: 1)
         )
         let item = PlacedItem(
@@ -775,6 +782,7 @@ final class ARShelfViewModel {
                     createdAt: shelf.createdAt,
                     updatedAt: shelf.updatedAt,
                     anchorTransformData: shelf.anchorTransformData,
+                    anchorTransformVersion: shelf.anchorTransformVersion,
                     items: shelf.items.map { item in
                         ARShelfItemSnapshot(
                             id: item.id,
@@ -824,6 +832,7 @@ final class ARShelfViewModel {
                 createdAt: shelfSnapshot.createdAt,
                 updatedAt: shelfSnapshot.updatedAt,
                 anchorTransformData: shelfSnapshot.anchorTransformData,
+                anchorTransformVersion: shelfSnapshot.anchorTransformVersion,
                 room: room
             )
 

@@ -449,7 +449,7 @@ struct ScannedModelPreviewView: View {
 		}
 
 		if let snapshotImage = previewController.snapshotCurrentImage(),
-		   let thumbnailData = snapshotImage.pngData() {
+		   let thumbnailData = snapshotImage.encodedThumbnailData() {
 			model.thumbnailData = thumbnailData
 			didUpdate = true
 		}

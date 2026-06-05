@@ -6,7 +6,7 @@ enum ImageStore {
     static let goodsFolderName = "GoodsImages"
     private static let imageCache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
-        cache.countLimit = 24
+        cache.countLimit = 8
         return cache
     }()
 

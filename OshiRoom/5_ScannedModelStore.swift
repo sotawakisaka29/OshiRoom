@@ -96,7 +96,12 @@ enum ScannedModelStore {
             return lowercased == "jpg" || lowercased == "jpeg" || lowercased == "png"
         }
 
-        return imageURL.flatMap { try? Data(contentsOf: $0) }
+        guard let imageURL,
+              let image = UIImage(contentsOfFile: imageURL.path) else {
+            return nil
+        }
+
+        return image.encodedThumbnailData()
     }
 
     static func loadModelThumbnailData(relativePath: String) -> Data? {
@@ -120,7 +125,7 @@ enum ScannedModelStore {
             with: renderedSize,
             antialiasingMode: .multisampling4X
         )
-        return image.pngData()
+        return image.encodedThumbnailData(maxPixelLength: 320, compressionQuality: 0.7)
     }
 
     static func modelFileName(for id: UUID) -> String {

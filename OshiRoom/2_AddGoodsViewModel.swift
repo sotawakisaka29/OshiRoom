@@ -9,41 +9,53 @@ import UIKit
 final class AddGoodsViewModel {
     var selectedItem: PhotosPickerItem?
     var previewImage: UIImage?
+    var pendingImagePath: String?
     var isProcessing = false
     var message = "写真を選ぶと、背景を除去して薄いアクスタ風オブジェクトにします。"
 
     private let backgroundRemovalService = BackgroundRemovalService()
 
-    func loadSelectedImage() async -> (UIImage, String)? {
+    func loadSelectedImage() async {
         guard let selectedItem else {
-            return nil
+            return
         }
 
         isProcessing = true
+        pendingImagePath = nil
+        previewImage = nil
         defer { isProcessing = false }
 
         do {
             guard let data = try await selectedItem.loadTransferable(type: Data.self),
                   let image = UIImage(data: data) else {
                 message = "画像を読み込めませんでした。別の写真で試してください。"
-                return nil
+                return
             }
 
-            return await process(image)
+            await process(image)
         } catch {
             message = "画像の作成に失敗しました。もう一度試してください。"
-            return nil
         }
     }
 
-    func processCapturedImage(_ image: UIImage) async -> (UIImage, String)? {
+    func processCapturedImage(_ image: UIImage) async {
         isProcessing = true
+        pendingImagePath = nil
+        previewImage = nil
         defer { isProcessing = false }
 
-        return await process(image)
+        await process(image)
     }
 
-    private func process(_ image: UIImage) async -> (UIImage, String)? {
+    func commitPreparedGoods() -> (UIImage, String)? {
+        guard let previewImage, let pendingImagePath else {
+            return nil
+        }
+
+        return (previewImage, pendingImagePath)
+    }
+
+    private func process(_ image: UIImage) async {
         do {
             let normalizedImage = image.normalizedForRendering()
             let processedImage: UIImage
@@ -60,11 +72,10 @@ final class AddGoodsViewModel {
 
             let imagePath = try ImageStore.save(processedImage)
             previewImage = processedImage
-            message = "グッズ画像の作成が完了しました。"
-            return (processedImage, imagePath)
+            pendingImagePath = imagePath
+            message = "プレビューを確認してから「追加する」を押してください。"
         } catch {
             message = "画像の作成に失敗しました。もう一度試してください。"
-            return nil
         }
     }
 }

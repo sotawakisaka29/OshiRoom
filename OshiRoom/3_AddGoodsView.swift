@@ -39,6 +39,24 @@ struct AddGoodsView: View {
 
 				preview
 
+				Button {
+					guard let result = viewModel.commitPreparedGoods() else {
+						return
+					}
+
+					onCreated(result.0, result.1)
+					dismiss()
+				} label: {
+					Label("追加する", systemImage: "checkmark.circle.fill")
+						.font(.headline)
+						.foregroundStyle(AppColors.background)
+						.frame(maxWidth: .infinity)
+						.frame(height: 56)
+						.background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+				}
+				.disabled(viewModel.previewImage == nil || viewModel.pendingImagePath == nil || viewModel.isProcessing)
+				.opacity(viewModel.previewImage == nil || viewModel.pendingImagePath == nil || viewModel.isProcessing ? 0.5 : 1)
+
 				VStack(spacing: 12) {
 					PhotosPicker(selection: $viewModel.selectedItem, matching: .images) {
 						Label("写真を選択", systemImage: "photo.on.rectangle")
@@ -105,18 +123,14 @@ struct AddGoodsView: View {
 			}
 			.onChange(of: viewModel.selectedItem) { _, _ in
 				Task {
-					if let result = await viewModel.loadSelectedImage() {
-						onCreated(result.0, result.1)
-					}
+					await viewModel.loadSelectedImage()
 				}
 			}
 			.fullScreenCover(isPresented: $isShowingCamera) {
 				CameraCaptureView { image in
 					isShowingCamera = false
 					Task {
-						if let result = await viewModel.processCapturedImage(image) {
-							onCreated(result.0, result.1)
-						}
+						await viewModel.processCapturedImage(image)
 					}
 				} onCancel: {
 					isShowingCamera = false
@@ -144,34 +158,62 @@ struct AddGoodsView: View {
 
 	@ViewBuilder
 	private var preview: some View {
-		if let image = viewModel.previewImage {
-			Image(uiImage: image)
-				.resizable()
-				.scaledToFit()
-				.frame(maxHeight: 260)
-				.frame(maxWidth: .infinity)
-				.padding(24)
-				.background(AppColors.background, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-				.overlay(
-					RoundedRectangle(cornerRadius: 28, style: .continuous)
-						.stroke(AppColors.separator, lineWidth: 1)
-				)
-		} else {
-			VStack(spacing: 14) {
-				Image(systemName: "person.crop.square")
-					.font(.system(size: 44, weight: .light))
-					.foregroundStyle(AppColors.textSecondary)
-				Text("背景除去後のプレビューがここに表示されます。")
-					.font(.subheadline)
-					.foregroundStyle(AppColors.textSecondary)
+		VStack(spacing: 16) {
+			HStack {
+				Text("プレビュー")
+					.font(.headline.weight(.semibold))
+					.foregroundStyle(AppColors.textPrimary)
+				Spacer()
+				if viewModel.isProcessing {
+					Label("作成中", systemImage: "hourglass")
+						.font(.caption.weight(.semibold))
+						.foregroundStyle(AppColors.textSecondary)
+				}
 			}
-			.frame(maxWidth: .infinity)
-			.frame(height: 260)
-			.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-			.overlay(
-				RoundedRectangle(cornerRadius: 28, style: .continuous)
-					.stroke(AppColors.separator, lineWidth: 1)
-			)
+
+			Group {
+				if let image = viewModel.previewImage {
+					Image(uiImage: image)
+						.resizable()
+						.scaledToFit()
+						.frame(maxHeight: 260)
+						.frame(maxWidth: .infinity)
+						.padding(24)
+						.background(
+							LinearGradient(
+								colors: [
+									AppColors.background,
+									AppColors.elevatedSurface
+								],
+								startPoint: .topLeading,
+								endPoint: .bottomTrailing
+							),
+							in: RoundedRectangle(cornerRadius: 28, style: .continuous)
+						)
+						.overlay(
+							RoundedRectangle(cornerRadius: 28, style: .continuous)
+								.stroke(AppColors.textPrimary.opacity(0.14), lineWidth: 1.5)
+						)
+						.shadow(color: AppColors.textPrimary.opacity(0.08), radius: 16, x: 0, y: 8)
+				} else {
+					VStack(spacing: 14) {
+						Image(systemName: "person.crop.square")
+							.font(.system(size: 44, weight: .light))
+							.foregroundStyle(AppColors.textSecondary)
+						Text(viewModel.isProcessing ? "プレビューを作成中です。" : "プレビューがここに表示されます。")
+							.font(.subheadline)
+							.foregroundStyle(AppColors.textSecondary)
+							.multilineTextAlignment(.center)
+					}
+					.frame(maxWidth: .infinity)
+					.frame(height: 260)
+					.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+					.overlay(
+						RoundedRectangle(cornerRadius: 28, style: .continuous)
+							.stroke(AppColors.separator, lineWidth: 1)
+					)
+				}
+			}
 		}
 	}
 }

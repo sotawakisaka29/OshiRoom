@@ -305,7 +305,7 @@ private final class ScannedModelPreviewEntityCache {
     private let storage = NSCache<NSString, EntityBox>()
 
     private init() {
-        storage.countLimit = 8
+        storage.countLimit = 4
     }
 
     func entity(for model: ScannedModel) -> Entity? {

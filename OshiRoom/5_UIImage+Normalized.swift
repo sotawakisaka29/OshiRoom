@@ -1,6 +1,37 @@
 import UIKit
 
 extension UIImage {
+    func encodedThumbnailData(
+        maxPixelLength: CGFloat = 320,
+        compressionQuality: CGFloat = 0.72
+    ) -> Data? {
+        let normalizedImage = normalizedForRendering()
+        let longestSide = max(normalizedImage.size.width, normalizedImage.size.height)
+        let targetImage: UIImage
+
+        if longestSide > maxPixelLength, longestSide > 0 {
+            let scale = maxPixelLength / longestSide
+            let targetSize = CGSize(
+                width: max(normalizedImage.size.width * scale, 1),
+                height: max(normalizedImage.size.height * scale, 1)
+            )
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = 1
+            format.opaque = false
+            targetImage = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+                normalizedImage.draw(in: CGRect(origin: .zero, size: targetSize))
+            }
+        } else {
+            targetImage = normalizedImage
+        }
+
+        if targetImage.containsTransparentPixels() {
+            return targetImage.pngData()
+        }
+
+        return targetImage.jpegData(compressionQuality: compressionQuality)
+    }
+
     /// UIImageの向き情報を実ピクセルへ焼き込み、RealityKitでも同じ向きで扱える画像にします。
     func normalizedForRendering() -> UIImage {
         guard imageOrientation != .up else {
