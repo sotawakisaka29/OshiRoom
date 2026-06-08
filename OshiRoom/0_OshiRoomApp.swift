@@ -1,3 +1,4 @@
+import Foundation
 import SwiftData
 import SwiftUI
 
@@ -25,9 +26,17 @@ struct OshiRoomApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            if isPromotionMode {
+                PromotionLaunchView()
+            } else {
+                ContentView()
+            }
         }
         .modelContainer(modelContainer)
+    }
+
+    private var isPromotionMode: Bool {
+        ProcessInfo.processInfo.arguments.contains("--promotion")
     }
 
     private static func migrateLegacyShelvesIfNeeded(in modelContext: ModelContext) {
