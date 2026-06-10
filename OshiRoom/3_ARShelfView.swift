@@ -72,7 +72,9 @@ struct ARShelfView: View {
                 RestoringRoomAnchorOverlay()
             }
         }
-        .sheet(isPresented: $isShowingAddGoods) {
+        .sheet(isPresented: $isShowingAddGoods, onDismiss: {
+            viewModel.discardEmptySpatialPlacementSelection(modelContext: modelContext)
+        }) {
             AddGoodsView { image, imagePath in
                 viewModel.queueGoods(image: image, imagePath: imagePath, modelContext: modelContext)
                 isShowingAddGoods = false
@@ -82,8 +84,13 @@ struct ARShelfView: View {
             }
         }
         .sheet(isPresented: $isShowingGoodsShelfPicker) {
-            GoodsShelfPickerView(shelves: viewModel.placedShelves) { shelf in
-                viewModel.selectShelfForGoodsInsertion(id: shelf.id)
+            GoodsShelfPickerView(shelves: viewModel.visiblePlacedShelves) { selection in
+                switch selection {
+                case .shelf(let shelf):
+                    viewModel.selectShelfForGoodsInsertion(id: shelf.id)
+                case .spatialPlacement:
+                    viewModel.selectSpatialPlacementForGoodsInsertion(modelContext: modelContext)
+                }
                 isShowingGoodsShelfPicker = false
                 isShowingAddGoods = true
             }
@@ -156,11 +163,7 @@ struct ARShelfView: View {
                         if activeEditorMode == .shelfEdit {
                             isShowingAddShelf = true
                         } else {
-                            if viewModel.placedShelves.isEmpty {
-                                viewModel.statusMessage = "先にAR空間へ配置済みの棚を用意してください。"
-                            } else {
-                                isShowingGoodsShelfPicker = true
-                            }
+                            isShowingGoodsShelfPicker = true
                         }
                     } label: {
                         BottomMenuItem(title: addButtonTitle, symbolName: addButtonSymbolName)
@@ -508,67 +511,44 @@ struct ShelfTemplatePickerView: View {
 struct GoodsShelfPickerView: View {
     @Environment(\.dismiss) private var dismiss
     let shelves: [Shelf]
-    let onSelected: (Shelf) -> Void
+    let onSelected: (GoodsPlacementDestination) -> Void
 
     var body: some View {
         NavigationStack {
-            Group {
-                if shelves.isEmpty {
-                    VStack(spacing: 14) {
-                        Image(systemName: "shippingbox")
-                            .font(.system(size: 38, weight: .light))
-                            .foregroundStyle(AppColors.textSecondary)
-                        Text("追加先の棚がありません")
-                            .font(.headline)
-                            .foregroundStyle(AppColors.textPrimary)
-                        Text("先に棚をAR空間へ配置してください。")
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.textSecondary)
+            List {
+                Button {
+                    onSelected(.spatialPlacement)
+                    dismiss()
+                } label: {
+                    GoodsPlacementDestinationRow(
+                        title: "グッズのみ",
+                        subtitle: "棚を使わず、空間にそのまま配置します",
+                        symbolName: "sparkles.rectangle.stack",
+                        tint: Color(red: 0.30, green: 0.56, blue: 0.78)
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+
+                ForEach(shelves) { shelf in
+                    Button {
+                        onSelected(.shelf(shelf))
+                        dismiss()
+                    } label: {
+                        GoodsPlacementDestinationRow(
+                            title: shelf.selectionDisplayName,
+                            subtitle: "\(shelf.items.count)個のグッズ",
+                            symbolName: shelf.template.symbolName,
+                            tint: shelf.template.tint
+                        )
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AppColors.groupedBackground)
-                } else {
-                    List {
-                        ForEach(shelves) { shelf in
-                            Button {
-                                onSelected(shelf)
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 14) {
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .fill(shelf.template.tint.opacity(0.16))
-                                        .frame(width: 58, height: 58)
-                                        .overlay {
-                                            Image(systemName: shelf.template.symbolName)
-                                                .foregroundStyle(shelf.template.tint)
-                                        }
-
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(shelf.name)
-                                            .font(.headline)
-                                            .foregroundStyle(AppColors.textPrimary)
-                                        Text("\(shelf.items.count)個のグッズ")
-                                            .font(.caption)
-                                            .foregroundStyle(AppColors.textSecondary)
-                                    }
-
-                                    Spacer()
-
-                                    Image(systemName: "chevron.right")
-                                        .font(.footnote.weight(.semibold))
-                                        .foregroundStyle(AppColors.textMuted)
-                                }
-                                .padding(.vertical, 6)
-                            }
-                            .buttonStyle(.plain)
-                            .listRowBackground(Color.clear)
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(AppColors.groupedBackground)
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.clear)
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(AppColors.groupedBackground)
             .navigationTitle("追加先の棚")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -579,6 +559,46 @@ struct GoodsShelfPickerView: View {
                 }
             }
         }
+    }
+}
+
+enum GoodsPlacementDestination {
+    case spatialPlacement
+    case shelf(Shelf)
+}
+
+private struct GoodsPlacementDestinationRow: View {
+    let title: String
+    let subtitle: String
+    let symbolName: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(tint.opacity(0.16))
+                .frame(width: 58, height: 58)
+                .overlay {
+                    Image(systemName: symbolName)
+                        .foregroundStyle(tint)
+                }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(AppColors.textPrimary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.textSecondary)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(AppColors.textMuted)
+        }
+        .padding(.vertical, 6)
     }
 }
 

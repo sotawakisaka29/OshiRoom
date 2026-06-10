@@ -352,7 +352,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
                 let localTransform = simd_inverse(firstWorldTransform) * worldTransform
                 shelf.anchorTransformData = MatrixCoder.encode(localTransform)
-                shelf.anchorTransformVersion = 3
+                shelf.anchorTransformVersion = currentShelfAnchorTransformVersion
                 shelf.updatedAt = .now
             }
             viewModel.room.updatedAt = .now
@@ -363,9 +363,15 @@ struct ARShelfRealityView: UIViewRepresentable {
                 return nil
             }
 
-            return shelf.anchorTransformVersion == nil
-                ? matrix * ShelfEntityFactory.savedAnchorCorrectionMatrix
-                : matrix
+            guard let version = shelf.anchorTransformVersion else {
+                return matrix * ShelfEntityFactory.savedAnchorCorrectionMatrix
+            }
+
+            if shelf.isSpatialPlacement && version < currentShelfAnchorTransformVersion {
+                return matrix * ShelfEntityFactory.savedAnchorCorrectionMatrix
+            }
+
+            return matrix
         }
 
         @discardableResult
@@ -395,7 +401,6 @@ struct ARShelfRealityView: UIViewRepresentable {
         private func restoreRoomRootAnchorIfPossible(in arView: ARView) -> AnchorEntity? {
             guard roomRootAnchor == nil,
                   viewModel.pendingShelf == nil,
-                  viewModel.pendingGoods == nil,
                   activeItemGestureCount == 0,
                   activeShelfGestureCount == 0,
                   viewModel.placedShelves.isEmpty == false,
@@ -502,7 +507,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
                 placeShelf(pendingShelf, with: localTransform, in: arView)
                 pendingShelf.anchorTransformData = MatrixCoder.encode(localTransform)
-                pendingShelf.anchorTransformVersion = 3
+                pendingShelf.anchorTransformVersion = currentShelfAnchorTransformVersion
                 pendingShelf.updatedAt = .now
                 viewModel.room.updatedAt = .now
                 viewModel.completePendingShelfPlacement(for: pendingShelf.id)
@@ -631,7 +636,10 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         @objc private func handleShelfGroupPan(_ gesture: UIPanGestureRecognizer) {
+            let isSpatialShelfSelected = viewModel.isMultipleSelectionActive == false
+                && viewModel.selectedShelves.contains(where: { $0.isSpatialPlacement })
             guard viewModel.isAllShelvesSelectionActive
+                    || isSpatialShelfSelected
                     || (viewModel.isMultipleSelectionActive && viewModel.selectedShelfIDs.isEmpty == false) else {
                 return
             }
@@ -928,7 +936,13 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             if viewModel.isMultipleSelectionActive {
                 if let itemID = itemID(for: hitEntity) {
-                    viewModel.selectItem(id: itemID)
+                    if viewModel.mode == .shelfEdit,
+                       let shelf = viewModel.room.shelves.first(where: { $0.items.contains(where: { $0.id == itemID }) }),
+                       shelf.isSpatialPlacement {
+                        viewModel.selectShelf(id: shelf.id)
+                    } else {
+                        viewModel.selectItem(id: itemID)
+                    }
                     updateGestureAvailability()
                     updateSelectionOutline()
                     return
@@ -997,7 +1011,10 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             let anchor = Entity()
             anchor.transform.matrix = transform
-            let shelfEntity = ShelfEntityFactory.makeShelf(template: shelf.template)
+            let shelfEntity = ShelfEntityFactory.makeShelf(
+                template: shelf.template,
+                isSpatialPlacement: shelf.isSpatialPlacement
+            )
             shelfEntity.name = shelf.id.uuidString
             anchor.addChild(shelfEntity)
             roomRootAnchor.addChild(anchor)
@@ -1191,12 +1208,13 @@ struct ARShelfRealityView: UIViewRepresentable {
             let selectedItemIDs = viewModel.selectedItemIDs
             let hasSelectedShelfTargets = selectedShelfIDs.isEmpty == false || isAllShelvesSelected
             let hasSelectedItemTargets = selectedItemIDs.isEmpty == false
+            let hasSelectedSpatialShelf = viewModel.selectedShelves.contains { $0.isSpatialPlacement }
             let isShelfHeightAdjustment = viewModel.mode == .shelfEdit
                 && viewModel.shelfMoveMode == .height
                 && (isMultipleSelectionActive ? hasSelectedShelfTargets : (viewModel.selectedShelfID != nil || isAllShelvesSelected))
             let isShelfHorizontalMovement = viewModel.mode == .shelfEdit
                 && viewModel.shelfMoveMode == .horizontalPlane
-                && (isMultipleSelectionActive ? hasSelectedShelfTargets : isAllShelvesSelected)
+                && (isMultipleSelectionActive ? hasSelectedShelfTargets : (isAllShelvesSelected || hasSelectedSpatialShelf))
             let isShelfRotationAdjustment = viewModel.mode == .shelfEdit
                 && viewModel.shelfMoveMode == .rotation
                 && (isMultipleSelectionActive ? hasSelectedShelfTargets : (viewModel.selectedShelfID != nil || isAllShelvesSelected))
@@ -1214,12 +1232,14 @@ struct ARShelfRealityView: UIViewRepresentable {
                 && (isMultipleSelectionActive ? hasSelectedItemTargets : viewModel.selectedItemID != nil)
 
             for (shelfID, recognizers) in shelfGestureRecognizers {
+                let isSpatialShelf = viewModel.room.shelves.first(where: { $0.id == shelfID })?.isSpatialPlacement ?? false
                 let isSelectedShelf = viewModel.mode == .shelfEdit
                     && isMultipleSelectionActive == false
                     && isAllShelvesSelected == false
                     && viewModel.selectedTarget == .shelf(shelfID)
                 recognizers.forEach { recognizer in
                     recognizer.isEnabled = isSelectedShelf
+                        && isSpatialShelf == false
                         && isShelfHeightAdjustment == false
                         && isShelfRotationAdjustment == false
                 }
@@ -1290,18 +1310,41 @@ struct ARShelfRealityView: UIViewRepresentable {
             for target in outlineTargets {
                 switch target {
                 case let .shelf(shelfID):
-                    guard let shelfEntity = shelfEntities[shelfID] else {
+                    guard let shelf = viewModel.room.shelves.first(where: { $0.id == shelfID }) else {
                         continue
                     }
 
-                    let outline = SelectionOutlineFactory.makeOutline(
-                        size: SIMD3<Float>(0.84, 0.30, 0.22),
-                        center: SIMD3<Float>(0, 0.08, 0),
-                        color: UIColor.systemBlue
-                    )
-                    shelfEntity.addChild(outline)
-                    selectionOutlines.append(outline)
-                    didAddOutline = true
+                    if shelf.isSpatialPlacement {
+                        let spatialTargets = shelf.items.map { ARShelfSelectionTarget.item($0.id) }
+                        for spatialTarget in spatialTargets {
+                            guard case let .item(itemID) = spatialTarget,
+                                  let itemEntity = itemEntities[itemID],
+                                  let item = viewModel.room.shelves.flatMap(\.items).first(where: { $0.id == itemID }) else {
+                                continue
+                            }
+
+                            let outlineSize = itemCollisionSizes[itemID]
+                                ?? (item.contentType == .model3D ? ModelGoodsEntityFactory.defaultCollisionSize : GoodsEntityFactory.size(forImageAt: item.imagePath))
+                            let outlineCenter = itemCollisionCenters[itemID] ?? .zero
+                            let outline = SelectionOutlineFactory.makeOutline(
+                                size: outlineSize,
+                                center: outlineCenter,
+                                color: UIColor.systemBlue
+                            )
+                            itemEntity.addChild(outline)
+                            selectionOutlines.append(outline)
+                            didAddOutline = true
+                        }
+                    } else if let shelfEntity = shelfEntities[shelfID] {
+                        let outline = SelectionOutlineFactory.makeOutline(
+                            size: SIMD3<Float>(0.84, 0.30, 0.22),
+                            center: SIMD3<Float>(0, 0.08, 0),
+                            color: UIColor.systemBlue
+                        )
+                        shelfEntity.addChild(outline)
+                        selectionOutlines.append(outline)
+                        didAddOutline = true
+                    }
                 case let .item(itemID):
                     guard let itemEntity = itemEntities[itemID],
                           let item = viewModel.room.shelves.flatMap(\.items).first(where: { $0.id == itemID }) else {
@@ -1348,6 +1391,10 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             switch viewModel.selectedTarget {
             case let .shelf(shelfID):
+                if let shelf = viewModel.room.shelves.first(where: { $0.id == shelfID }),
+                   shelf.isSpatialPlacement {
+                    return shelf.items.map { .item($0.id) }
+                }
                 return [.shelf(shelfID)]
             case let .item(itemID):
                 return [.item(itemID)]
@@ -1359,16 +1406,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         private func currentShelfLocalPositions() -> [UUID: SIMD3<Float>] {
-            let shelfIDs: [UUID]
-            if viewModel.isMultipleSelectionActive {
-                shelfIDs = viewModel.selectedShelfIDs
-            } else if viewModel.isAllShelvesSelectionActive {
-                shelfIDs = viewModel.placedShelves.map(\.id)
-            } else if let selectedShelfID = viewModel.selectedShelfID {
-                shelfIDs = [selectedShelfID]
-            } else {
-                shelfIDs = []
-            }
+            let shelfIDs = currentSelectedShelfIDs()
 
             return Dictionary(uniqueKeysWithValues: shelfIDs.compactMap { shelfID in
                 guard let shelfEntity = shelfEntities[shelfID] else {
@@ -1380,16 +1418,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         private func currentShelfWorldPositions() -> [UUID: SIMD3<Float>] {
-            let shelfIDs: [UUID]
-            if viewModel.isMultipleSelectionActive {
-                shelfIDs = viewModel.selectedShelfIDs
-            } else if viewModel.isAllShelvesSelectionActive {
-                shelfIDs = viewModel.placedShelves.map(\.id)
-            } else if let selectedShelfID = viewModel.selectedShelfID {
-                shelfIDs = [selectedShelfID]
-            } else {
-                shelfIDs = []
-            }
+            let shelfIDs = currentSelectedShelfIDs()
 
             return Dictionary(uniqueKeysWithValues: shelfIDs.compactMap { shelfID in
                 guard let shelfEntity = shelfEntities[shelfID] else {
@@ -1401,16 +1430,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         private func currentShelfLocalOrientations() -> [UUID: simd_quatf] {
-            let shelfIDs: [UUID]
-            if viewModel.isMultipleSelectionActive {
-                shelfIDs = viewModel.selectedShelfIDs
-            } else if viewModel.isAllShelvesSelectionActive {
-                shelfIDs = viewModel.placedShelves.map(\.id)
-            } else if let selectedShelfID = viewModel.selectedShelfID {
-                shelfIDs = [selectedShelfID]
-            } else {
-                shelfIDs = []
-            }
+            let shelfIDs = currentSelectedShelfIDs()
 
             return Dictionary(uniqueKeysWithValues: shelfIDs.compactMap { shelfID in
                 guard let shelfEntity = shelfEntities[shelfID] else {
@@ -1479,9 +1499,11 @@ struct ARShelfRealityView: UIViewRepresentable {
                     continue
                 }
                 let anchorTransform = shelfEntity.transformMatrix(relativeTo: roomRootAnchor)
-                    * ShelfEntityFactory.savedAnchorCorrectionMatrix
-                shelf.anchorTransformData = MatrixCoder.encode(anchorTransform)
-                shelf.anchorTransformVersion = 3
+                let persistedAnchorTransform = shelf.isSpatialPlacement
+                    ? anchorTransform
+                    : anchorTransform * ShelfEntityFactory.savedAnchorCorrectionMatrix
+                shelf.anchorTransformData = MatrixCoder.encode(persistedAnchorTransform)
+                shelf.anchorTransformVersion = currentShelfAnchorTransformVersion
                 shelf.updatedAt = .now
             }
         }
@@ -1570,22 +1592,44 @@ struct ARShelfRealityView: UIViewRepresentable {
                 ?? .zero
             let scaledCollisionSize = resolvedCollisionSize * entity.scale
             let scaledCollisionCenter = resolvedCollisionCenter * entity.scale
+            let movementBounds = resolvedItemID.flatMap { goodsMovementBounds(for: $0) } ?? GoodsMovementBounds.shelf
 
             clamped.x = clampGoodsAxis(
                 position.x,
                 centerOffset: scaledCollisionCenter.x,
                 halfExtent: scaledCollisionSize.x * 0.5,
-                minimum: -0.36,
-                maximum: 0.36
+                minimum: movementBounds.minimumX,
+                maximum: movementBounds.maximumX
             )
             clamped.z = clampGoodsAxis(
                 position.z,
                 centerOffset: scaledCollisionCenter.z,
                 halfExtent: scaledCollisionSize.z * 0.5,
-                minimum: -0.08,
-                maximum: 0.03
+                minimum: movementBounds.minimumZ,
+                maximum: movementBounds.maximumZ
             )
             return clamped
+        }
+
+        private func currentSelectedShelfIDs() -> [UUID] {
+            if viewModel.isMultipleSelectionActive {
+                return viewModel.selectedShelfIDs
+            }
+            if viewModel.isAllShelvesSelectionActive {
+                return viewModel.placedShelves.map(\.id)
+            }
+            if let selectedShelfID = viewModel.selectedShelfID {
+                return [selectedShelfID]
+            }
+            return []
+        }
+
+        private func goodsMovementBounds(for itemID: UUID) -> GoodsMovementBounds {
+            guard let item = viewModel.room.shelves.flatMap(\.items).first(where: { $0.id == itemID }) else {
+                return .shelf
+            }
+
+            return item.shelf?.isSpatialPlacement == true ? .spatial : .shelf
         }
 
         private func clampGoodsAxis(
@@ -1677,9 +1721,31 @@ private extension simd_float4x4 {
     }
 }
 
+private struct GoodsMovementBounds {
+    let minimumX: Float
+    let maximumX: Float
+    let minimumZ: Float
+    let maximumZ: Float
+
+    static let shelf = GoodsMovementBounds(
+        minimumX: -0.36,
+        maximumX: 0.36,
+        minimumZ: -0.08,
+        maximumZ: 0.03
+    )
+
+    static let spatial = GoodsMovementBounds(
+        minimumX: -1.8,
+        maximumX: 1.8,
+        minimumZ: -2.4,
+        maximumZ: 0.6
+    )
+}
+
 /// テンプレートごとの仮棚Entityを作ります。
 enum ShelfEntityFactory {
     static let collisionSize = SIMD3<Float>(0.82, 0.28, 0.2)
+    static let spatialCollisionSize = SIMD3<Float>(1.2, 0.8, 1.2)
     // 棚モデルの初期向きが180度回転なので、保存時/旧データ読み込み時に補正します。
     static let savedAnchorCorrectionMatrix = simd_float4x4(
         SIMD4<Float>(-1, 0, 0, 0),
@@ -1693,7 +1759,13 @@ enum ShelfEntityFactory {
         return cache
     }()
 
-    static func makeShelf(template: ShelfTemplate) -> ModelEntity {
+    static func makeShelf(template: ShelfTemplate, isSpatialPlacement: Bool) -> ModelEntity {
+        if isSpatialPlacement {
+            let root = ModelEntity()
+            root.components.set(CollisionComponent(shapes: [.generateBox(size: spatialCollisionSize)]))
+            return root
+        }
+
         let cacheKey = template.rawValue as NSString
         if let cachedEntity = shelfEntityCache.object(forKey: cacheKey) {
             return cachedEntity.clone(recursive: true)

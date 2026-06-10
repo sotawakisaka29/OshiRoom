@@ -10,7 +10,7 @@ struct ScannedModelSaveResult {
 
 /// スキャン画像と生成済みUSDZをDocuments配下で管理します。
 enum ScannedModelStore {
-    private static let rootFolderName = "ScannedModels"
+    static let rootFolderName = "ScannedModels"
 
     static func createCaptureDirectory(for id: UUID) throws -> String {
         let directoryName = "\(id.uuidString)-images"
@@ -137,7 +137,26 @@ enum ScannedModelStore {
             return nil
         }
 
-        return rootURL.appendingPathComponent(relativePath)
+        return resolvedFileURL(forRelativePath: relativePath, in: rootURL)
+    }
+
+    static func resolvedFileURL(forRelativePath relativePath: String, in rootURL: URL) -> URL? {
+        let primaryURL = rootURL.appendingPathComponent(relativePath)
+        if FileManager.default.fileExists(atPath: primaryURL.path) {
+            return primaryURL
+        }
+
+        let baseName = (relativePath as NSString).deletingPathExtension
+        let preferredExtensions = ["usdz", "reality"]
+
+        for fileExtension in preferredExtensions {
+            let candidateURL = rootURL.appendingPathComponent(baseName).appendingPathExtension(fileExtension)
+            if FileManager.default.fileExists(atPath: candidateURL.path) {
+                return candidateURL
+            }
+        }
+
+        return nil
     }
 
     static func delete(relativePath: String) throws {

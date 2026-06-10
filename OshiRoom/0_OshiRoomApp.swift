@@ -4,7 +4,13 @@ import SwiftUI
 
 @main
 struct OshiRoomApp: App {
-    private let modelContainer: ModelContainer = {
+    var body: some Scene {
+        WindowGroup {
+            AppRootView()
+        }
+    }
+
+    fileprivate static func makeModelContainer() -> ModelContainer {
         let modelTypes: [any PersistentModel.Type] = [Room.self, Shelf.self, PlacedItem.self, ScannedModel.self]
         let schema = Schema(modelTypes)
         let configuration = ModelConfiguration(schema: schema)
@@ -22,17 +28,6 @@ struct OshiRoomApp: App {
             }
             return fallbackContainer
         }
-    }()
-
-    var body: some Scene {
-        WindowGroup {
-            if isPromotionMode {
-                PromotionLaunchView()
-            } else {
-                ContentView()
-            }
-        }
-        .modelContainer(modelContainer)
     }
 
     private var isPromotionMode: Bool {
@@ -105,5 +100,20 @@ struct OshiRoomApp: App {
         }
 
         try? modelContext.save()
+    }
+}
+
+private struct AppRootView: View {
+    @State private var modelContainer = OshiRoomApp.makeModelContainer()
+
+    var body: some View {
+        Group {
+            if ProcessInfo.processInfo.arguments.contains("--promotion") {
+                PromotionLaunchView()
+            } else {
+                ContentView()
+            }
+        }
+        .modelContainer(modelContainer)
     }
 }

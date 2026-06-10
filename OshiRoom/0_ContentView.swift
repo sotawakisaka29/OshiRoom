@@ -3,6 +3,10 @@ import SwiftUI
 
 /// アプリ全体の入口になる画面です。
 struct ContentView: View {
+    @AppStorage("hasCompletedOnboardingTutorial") private var hasCompletedOnboardingTutorial = false
+    @State private var isShowingOnboardingTutorial = false
+    @State private var didEvaluateOnboarding = false
+
     var body: some View {
         TabView {
             HomeView()
@@ -14,6 +18,20 @@ struct ContentView: View {
                 .tabItem {
                     Label("図鑑", systemImage: "square.grid.2x2.fill")
                 }
+        }
+        .fullScreenCover(isPresented: $isShowingOnboardingTutorial) {
+            OnboardingTutorialView {
+                hasCompletedOnboardingTutorial = true
+                isShowingOnboardingTutorial = false
+            }
+        }
+        .onAppear {
+            guard didEvaluateOnboarding == false else {
+                return
+            }
+
+            didEvaluateOnboarding = true
+            isShowingOnboardingTutorial = hasCompletedOnboardingTutorial == false
         }
     }
 }

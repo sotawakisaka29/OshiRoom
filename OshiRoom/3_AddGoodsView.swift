@@ -25,94 +25,99 @@ struct AddGoodsView: View {
 		@Bindable var viewModel = viewModel
 
 		NavigationStack {
-			VStack(spacing: 24) {
-				VStack(spacing: 10) {
-					Text("グッズ追加")
-						.font(.system(.largeTitle, design: .rounded).weight(.bold))
-						.foregroundStyle(AppColors.textPrimary)
-					Text(viewModel.message)
-						.font(.callout)
-						.foregroundStyle(AppColors.textSecondary)
-						.multilineTextAlignment(.center)
-						.padding(.horizontal)
-				}
-
-				preview
-
-				Button {
-					guard let result = viewModel.commitPreparedGoods() else {
-						return
+			GeometryReader { proxy in
+				VStack(spacing: 20) {
+					VStack(spacing: 10) {
+						Text("グッズ追加")
+							.font(.system(.largeTitle, design: .rounded).weight(.bold))
+							.foregroundStyle(AppColors.textPrimary)
+						Text(viewModel.message)
+							.font(.callout)
+							.foregroundStyle(AppColors.textSecondary)
+							.multilineTextAlignment(.center)
+							.padding(.horizontal)
 					}
 
-					onCreated(result.0, result.1)
-					dismiss()
-				} label: {
-					Label("追加する", systemImage: "checkmark.circle.fill")
-						.font(.headline)
-						.foregroundStyle(AppColors.background)
-						.frame(maxWidth: .infinity)
-						.frame(height: 56)
-						.background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-				}
-				.disabled(viewModel.previewImage == nil || viewModel.pendingImagePath == nil || viewModel.isProcessing)
-				.opacity(viewModel.previewImage == nil || viewModel.pendingImagePath == nil || viewModel.isProcessing ? 0.5 : 1)
+					preview(availableHeight: proxy.size.height)
 
-				VStack(spacing: 12) {
-					PhotosPicker(selection: $viewModel.selectedItem, matching: .images) {
-						Label("写真を選択", systemImage: "photo.on.rectangle")
-							.font(.headline)
-							.foregroundStyle(AppColors.background)
-							.frame(maxWidth: .infinity)
-							.frame(height: 56)
-							.background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-					}
-					.disabled(viewModel.isProcessing)
+					if isShowingPreparedPhotoState {
+						Button {
+							guard let result = viewModel.commitPreparedGoods() else {
+								return
+							}
 
-					Button {
-						if canUseCamera {
-							isShowingCamera = true
-						} else {
-							viewModel.message = "この端末ではカメラを利用できません。写真選択を使ってください。"
+							onCreated(result.0, result.1)
+							dismiss()
+						} label: {
+							Label("追加する", systemImage: "checkmark.circle.fill")
+								.font(.headline)
+								.foregroundStyle(AppColors.background)
+								.frame(maxWidth: .infinity)
+								.frame(height: 56)
+								.background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
 						}
-					} label: {
-						Label("カメラで撮影", systemImage: "camera")
-							.font(.headline)
-							.foregroundStyle(AppColors.textPrimary)
-							.frame(maxWidth: .infinity)
-							.frame(height: 56)
-							.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-							.overlay(
-								RoundedRectangle(cornerRadius: 20, style: .continuous)
-									.stroke(AppColors.separator, lineWidth: 1)
-							)
+						.disabled(viewModel.previewImage == nil || viewModel.pendingImagePath == nil || viewModel.isProcessing)
+						.opacity(viewModel.previewImage == nil || viewModel.pendingImagePath == nil || viewModel.isProcessing ? 0.5 : 1)
+					} else {
+						VStack(spacing: 12) {
+							PhotosPicker(selection: $viewModel.selectedItem, matching: .images) {
+								Label("写真を選択", systemImage: "photo.on.rectangle")
+									.font(.headline)
+									.foregroundStyle(AppColors.background)
+									.frame(maxWidth: .infinity)
+									.frame(height: 56)
+									.background(AppColors.textPrimary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+							}
+							.disabled(viewModel.isProcessing)
+
+							Button {
+								if canUseCamera {
+									isShowingCamera = true
+								} else {
+									viewModel.message = "この端末ではカメラを利用できません。写真選択を使ってください。"
+								}
+							} label: {
+								Label("カメラで撮影", systemImage: "camera")
+									.font(.headline)
+									.foregroundStyle(AppColors.textPrimary)
+									.frame(maxWidth: .infinity)
+									.frame(height: 56)
+									.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+									.overlay(
+										RoundedRectangle(cornerRadius: 20, style: .continuous)
+											.stroke(AppColors.separator, lineWidth: 1)
+									)
+							}
+							.disabled(viewModel.isProcessing)
+
+							Button {
+								isShowingModelSelection = true
+							} label: {
+								Label("3Dモデルを選択", systemImage: "cube")
+									.font(.headline)
+									.foregroundStyle(AppColors.textPrimary)
+									.frame(maxWidth: .infinity)
+									.frame(height: 56)
+									.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+									.overlay(
+										RoundedRectangle(cornerRadius: 20, style: .continuous)
+											.stroke(AppColors.separator, lineWidth: 1)
+									)
+							}
+							.disabled(availableModels.isEmpty || viewModel.isProcessing)
+						}
 					}
-					.disabled(viewModel.isProcessing)
 
-					Button {
-						isShowingModelSelection = true
-					} label: {
-						Label("3Dモデルを選択", systemImage: "cube")
-							.font(.headline)
-							.foregroundStyle(AppColors.textPrimary)
-							.frame(maxWidth: .infinity)
-							.frame(height: 56)
-							.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-							.overlay(
-								RoundedRectangle(cornerRadius: 20, style: .continuous)
-									.stroke(AppColors.separator, lineWidth: 1)
-							)
+					if viewModel.isProcessing {
+						ProgressView("作成中")
+							.padding(.top, 4)
 					}
-					.disabled(availableModels.isEmpty || viewModel.isProcessing)
-				}
 
-				if viewModel.isProcessing {
-					ProgressView("作成中")
-						.padding(.top, 4)
+					Spacer(minLength: 0)
 				}
-
-				Spacer()
+				.padding(22)
+				.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 			}
-			.padding(22)
 			.background(AppColors.groupedBackground.ignoresSafeArea())
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
@@ -156,8 +161,18 @@ struct AddGoodsView: View {
 		UIImagePickerController.isSourceTypeAvailable(.camera)
 	}
 
+	private var isShowingPreparedPhotoState: Bool {
+		viewModel.previewImage != nil || viewModel.pendingImagePath != nil || viewModel.isProcessing
+	}
+
 	@ViewBuilder
-	private var preview: some View {
+	private func preview(availableHeight: CGFloat) -> some View {
+		let previewHeight: CGFloat = if isShowingPreparedPhotoState {
+			min(max(availableHeight * 0.56, 420), 620)
+		} else {
+			min(max(availableHeight * 0.2, 160), 220)
+		}
+
 		VStack(spacing: 16) {
 			HStack {
 				Text("プレビュー")
@@ -176,9 +191,9 @@ struct AddGoodsView: View {
 					Image(uiImage: image)
 						.resizable()
 						.scaledToFit()
-						.frame(maxHeight: 260)
+						.frame(maxHeight: previewHeight)
 						.frame(maxWidth: .infinity)
-						.padding(24)
+						.padding(18)
 						.background(
 							LinearGradient(
 								colors: [
@@ -206,7 +221,7 @@ struct AddGoodsView: View {
 							.multilineTextAlignment(.center)
 					}
 					.frame(maxWidth: .infinity)
-					.frame(height: 260)
+					.frame(height: previewHeight)
 					.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
 					.overlay(
 						RoundedRectangle(cornerRadius: 28, style: .continuous)

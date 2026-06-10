@@ -177,6 +177,14 @@ final class ARShelfViewModel {
         sortedShelves.filter { $0.anchorTransformData != nil }
     }
 
+    var visiblePlacedShelves: [Shelf] {
+        placedShelves.filter { $0.isSpatialPlacement == false }
+    }
+
+    var spatialPlacementShelf: Shelf? {
+        room.shelves.first { $0.isSpatialPlacement }
+    }
+
     var canDeleteSelection: Bool {
         hasActiveSelection
     }
@@ -298,12 +306,7 @@ final class ARShelfViewModel {
 
         let undoSnapshot = makeUndoSnapshot(includeImageData: false)
         let slotIndex = nextAvailableSlotIndex(in: shelf)
-        let backwardTilt = simd_quatf(angle: -Float.pi / 12, axis: SIMD3<Float>(1, 0, 0))
-        let forwardFacing = simd_quatf(angle: .pi, axis: SIMD3<Float>(0, 1, 0))
-        let transform = TransformSnapshot(
-            position: slotPosition(for: slotIndex),
-            rotation: forwardFacing * backwardTilt
-        )
+        let transform = initialTransform(for: shelf, slotIndex: slotIndex, contentType: .image)
         let item = PlacedItem(
             imagePath: imagePath,
             displayName: "オブジェクト\(slotIndex + 1)",
@@ -321,7 +324,7 @@ final class ARShelfViewModel {
         isMultipleSelectionActive = false
         multiSelectionTargets.removeAll()
         selectedTarget = .item(item.id)
-        statusMessage = "グッズを棚へ配置しました"
+        statusMessage = shelf.isSpatialPlacement ? "グッズを空間へ配置しました" : "グッズを棚へ配置しました"
         pushUndoSnapshot(undoSnapshot)
     }
 
@@ -336,7 +339,46 @@ final class ARShelfViewModel {
         isMultipleSelectionActive = false
         multiSelectionTargets.removeAll()
         selectedTarget = .shelf(id)
-        statusMessage = "「\(shelf.name)」に追加します。写真か3Dモデルを選んでください。"
+        statusMessage = shelf.isSpatialPlacement
+            ? "空間配置に追加します。写真か3Dモデルを選んでください。"
+            : "「\(shelf.name)」に追加します。写真か3Dモデルを選んでください。"
+    }
+
+    func selectSpatialPlacementForGoodsInsertion(modelContext: ModelContext) {
+        let undoSnapshot = makeUndoSnapshot(includeImageData: false)
+        let shelf: Shelf
+
+        if let existingShelf = spatialPlacementShelf {
+            shelf = existingShelf
+        } else {
+            shelf = Shelf(
+                name: "グッズのみ",
+                template: .wood,
+                anchorTransformData: MatrixCoder.encode(matrix_identity_float4x4),
+                anchorTransformVersion: currentShelfAnchorTransformVersion,
+                room: room
+            )
+            shelf.isSpatialPlacement = true
+            room.shelves.append(shelf)
+            room.updatedAt = .now
+            modelContext.insert(shelf)
+
+            do {
+                try modelContext.save()
+                pushUndoSnapshot(undoSnapshot)
+            } catch {
+                room.shelves.removeAll { $0.id == shelf.id }
+                modelContext.delete(shelf)
+                statusMessage = "空間配置の準備に失敗しました。もう一度試してください。"
+                return
+            }
+        }
+
+        mode = .goodsEdit
+        isMultipleSelectionActive = false
+        multiSelectionTargets.removeAll()
+        selectedTarget = .shelf(shelf.id)
+        statusMessage = "空間配置に追加します。写真か3Dモデルを選んでください。"
     }
 
     func toggleAllShelvesSelection() {
@@ -356,12 +398,7 @@ final class ARShelfViewModel {
 
         let undoSnapshot = makeUndoSnapshot(includeImageData: false)
         let slotIndex = nextAvailableSlotIndex(in: shelf)
-        let forwardFacing = simd_quatf(angle: .pi, axis: SIMD3<Float>(0, 1, 0))
-        let transform = TransformSnapshot(
-            position: modelSlotPosition(for: slotIndex),
-            rotation: forwardFacing,
-            scale: SIMD3<Float>(repeating: 1)
-        )
+        let transform = initialTransform(for: shelf, slotIndex: slotIndex, contentType: .model3D)
         let item = PlacedItem(
             imagePath: "",
             modelPath: modelPath,
@@ -381,7 +418,7 @@ final class ARShelfViewModel {
         isMultipleSelectionActive = false
         multiSelectionTargets.removeAll()
         selectedTarget = .item(item.id)
-        statusMessage = "3Dモデルを棚へ配置しました"
+        statusMessage = shelf.isSpatialPlacement ? "3Dモデルを空間へ配置しました" : "3Dモデルを棚へ配置しました"
         pushUndoSnapshot(undoSnapshot)
     }
 
@@ -742,6 +779,23 @@ final class ARShelfViewModel {
         saveRequestToken += 1
     }
 
+    func discardEmptySpatialPlacementSelection(modelContext: ModelContext) {
+        guard let shelf = selectedShelf,
+              shelf.isSpatialPlacement,
+              shelf.items.isEmpty,
+              pendingGoods == nil else {
+            return
+        }
+
+        room.shelves.removeAll { $0.id == shelf.id }
+        if selectedTarget == .shelf(shelf.id) {
+            selectedTarget = nil
+        }
+        modelContext.delete(shelf)
+        room.updatedAt = .now
+        try? modelContext.save()
+    }
+
     func requestSceneReload() {
         sceneReloadRequestToken += 1
     }
@@ -838,6 +892,9 @@ final class ARShelfViewModel {
                 anchorTransformVersion: shelfSnapshot.anchorTransformVersion,
                 room: room
             )
+            if shelfSnapshot.templateRawValue == Shelf.spatialPlacementTemplateRawValue {
+                shelf.isSpatialPlacement = true
+            }
 
             for itemSnapshot in shelfSnapshot.items {
                 if let imageData = itemSnapshot.imageData {
@@ -956,6 +1013,44 @@ final class ARShelfViewModel {
         }
 
         return index
+    }
+
+    private func initialTransform(
+        for shelf: Shelf,
+        slotIndex: Int,
+        contentType: PlacedItemContentType
+    ) -> TransformSnapshot {
+        let forwardFacing = simd_quatf(angle: .pi, axis: SIMD3<Float>(0, 1, 0))
+
+        if shelf.isSpatialPlacement {
+            let backwardTilt = contentType == .image
+                ? simd_quatf(angle: -Float.pi / 18, axis: SIMD3<Float>(1, 0, 0))
+                : simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
+            let column = slotIndex % 4
+            let row = slotIndex / 4
+            let x = (-0.24) + Float(column) * 0.16
+            let z = (-0.28) - Float(row) * 0.16
+            let y: Float = contentType == .image ? 0.08 : 0.02
+            return TransformSnapshot(
+                position: SIMD3<Float>(x, y, z),
+                rotation: forwardFacing * backwardTilt,
+                scale: SIMD3<Float>(repeating: 1)
+            )
+        }
+
+        if contentType == .model3D {
+            return TransformSnapshot(
+                position: modelSlotPosition(for: slotIndex),
+                rotation: forwardFacing,
+                scale: SIMD3<Float>(repeating: 1)
+            )
+        }
+
+        let backwardTilt = simd_quatf(angle: -Float.pi / 12, axis: SIMD3<Float>(1, 0, 0))
+        return TransformSnapshot(
+            position: slotPosition(for: slotIndex),
+            rotation: forwardFacing * backwardTilt
+        )
     }
 
     private func nextShelfName(for template: ShelfTemplate) -> String {

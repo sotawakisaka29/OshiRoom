@@ -39,11 +39,10 @@ enum ImageStore {
             return cachedImage
         }
 
-        guard let folderURL = try? goodsFolderURL() else {
+        guard let fileURL = resolvedFileURL(for: path) else {
             return nil
         }
 
-        let fileURL = folderURL.appendingPathComponent(path)
         guard let image = UIImage(contentsOfFile: fileURL.path) else {
             return nil
         }
@@ -53,21 +52,16 @@ enum ImageStore {
     }
 
     static func url(for path: String) -> URL? {
-        guard let folderURL = try? goodsFolderURL() else {
-            return nil
-        }
-
-        return folderURL.appendingPathComponent(path)
+        resolvedFileURL(for: path)
     }
 
     static func delete(path: String) {
         imageCache.removeObject(forKey: path as NSString)
 
-        guard let folderURL = try? goodsFolderURL() else {
+        guard let fileURL = resolvedFileURL(for: path) else {
             return
         }
 
-        let fileURL = folderURL.appendingPathComponent(path)
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return
         }
@@ -89,6 +83,37 @@ enum ImageStore {
         }
 
         return folderURL
+    }
+
+    static func resolvedPath(for path: String) -> String? {
+        resolvedFileURL(for: path)?.lastPathComponent
+    }
+
+    static func resolvedFileURL(for path: String, in folderURL: URL) -> URL? {
+        let primaryURL = folderURL.appendingPathComponent(path)
+        if FileManager.default.fileExists(atPath: primaryURL.path) {
+            return primaryURL
+        }
+
+        let baseName = (path as NSString).deletingPathExtension
+        let preferredExtensions = ["png", "jpg", "jpeg", "heic"]
+
+        for fileExtension in preferredExtensions {
+            let candidateURL = folderURL.appendingPathComponent(baseName).appendingPathExtension(fileExtension)
+            if FileManager.default.fileExists(atPath: candidateURL.path) {
+                return candidateURL
+            }
+        }
+
+        return nil
+    }
+
+    private static func resolvedFileURL(for path: String) -> URL? {
+        guard let folderURL = try? goodsFolderURL() else {
+            return nil
+        }
+
+        return resolvedFileURL(for: path, in: folderURL)
     }
 }
 

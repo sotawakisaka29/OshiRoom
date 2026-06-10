@@ -1,6 +1,8 @@
 import Foundation
 import SwiftData
 
+let currentShelfAnchorTransformVersion = 4
+
 /// ユーザーが作成したAR棚です。
 @Model
 final class Shelf {
@@ -27,7 +29,7 @@ final class Shelf {
         createdAt: Date = .now,
         updatedAt: Date = .now,
         anchorTransformData: Data? = nil,
-        anchorTransformVersion: Int? = 3,
+        anchorTransformVersion: Int? = currentShelfAnchorTransformVersion,
         room: Room? = nil,
         items: [PlacedItem] = []
     ) {
@@ -47,5 +49,22 @@ final class Shelf {
     var template: ShelfTemplate {
         get { ShelfTemplate(rawValue: templateRawValue) ?? .wood }
         set { templateRawValue = newValue.rawValue }
+    }
+
+    static let spatialPlacementTemplateRawValue = "__spatialPlacement__"
+
+    var isSpatialPlacement: Bool {
+        get { templateRawValue == Self.spatialPlacementTemplateRawValue }
+        set {
+            if newValue {
+                templateRawValue = Self.spatialPlacementTemplateRawValue
+            } else if templateRawValue == Self.spatialPlacementTemplateRawValue {
+                templateRawValue = ShelfTemplate.wood.rawValue
+            }
+        }
+    }
+
+    var selectionDisplayName: String {
+        isSpatialPlacement ? "グッズのみ" : name
     }
 }

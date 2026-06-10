@@ -119,6 +119,7 @@ struct HomeView: View {
                         .transition(.opacity)
                         .zIndex(1)
                 }
+
             }
             .navigationTitle("My Oshi Room")
             .navigationBarTitleDisplayMode(.large)
@@ -417,6 +418,7 @@ struct HomeView: View {
 
         try? modelContext.save()
     }
+
 }
 
 /// 部屋一覧のカードです。
