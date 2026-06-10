@@ -27,7 +27,7 @@ final class Shelf {
         createdAt: Date = .now,
         updatedAt: Date = .now,
         anchorTransformData: Data? = nil,
-        anchorTransformVersion: Int? = 2,
+        anchorTransformVersion: Int? = 3,
         room: Room? = nil,
         items: [PlacedItem] = []
     ) {

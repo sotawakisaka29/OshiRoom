@@ -1,6 +1,5 @@
 import ARKit
 import CryptoKit
-import Photos
 import RealityKit
 import SwiftData
 import SwiftUI
@@ -49,7 +48,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         coordinator.persistBeforeDismiss()
     }
 
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, ARSessionDelegate {
         private struct InteractionUpdateState: Equatable {
             var mode: ARInteractionMode
             var isInterfaceHidden: Bool
@@ -67,7 +66,8 @@ struct ARShelfRealityView: UIViewRepresentable {
         var onRequestShowInterface: () -> Void
         var onSnapshotSaved: (UIImage) -> Void
         private weak var arView: ARView?
-        private var anchorEntities: [UUID: AnchorEntity] = [:]
+        private var roomRootAnchor: AnchorEntity?
+        private var anchorEntities: [UUID: Entity] = [:]
         private var shelfEntities: [UUID: ModelEntity] = [:]
         private var itemEntities: [UUID: ModelEntity] = [:]
         private var itemCollisionSizes: [UUID: SIMD3<Float>] = [:]
@@ -99,8 +99,6 @@ struct ARShelfRealityView: UIViewRepresentable {
         private var didNotifyReady = false
         private var activeItemGestureCount = 0
         private var activeShelfGestureCount = 0
-        private var isCapturingWorldMap = false
-        private var lastWorldMapCaptureDate: Date?
         private var lastInteractionUpdateState: InteractionUpdateState?
 
         init(
@@ -120,15 +118,13 @@ struct ARShelfRealityView: UIViewRepresentable {
         func makeARView() -> ARView {
             let arView = ARView(frame: .zero)
             self.arView = arView
+            arView.session.delegate = self
             arView.environment.sceneUnderstanding.options.insert(.occlusion)
             arView.automaticallyConfigureSession = false
 
             let configuration = ARWorldTrackingConfiguration()
             configuration.planeDetection = [.horizontal]
             configuration.environmentTexturing = .automatic
-            if let worldMap = WorldMapCoder.decode(viewModel.room.worldMapData) {
-                configuration.initialWorldMap = worldMap
-            }
             arView.session.run(configuration)
 
             let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
@@ -191,18 +187,31 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         func syncShelvesIfNeeded(in arView: ARView) {
+            migrateLegacyShelfAnchorsToRootIfNeeded()
+
+            if roomRootAnchor == nil {
+                if viewModel.placedShelves.isEmpty {
+                    viewModel.isRestoringRoomAnchor = false
+                    _ = ensureRoomRootAnchorIfNeeded(in: arView)
+                } else {
+                    viewModel.isRestoringRoomAnchor = true
+                    _ = restoreRoomRootAnchorIfPossible(in: arView)
+                }
+            } else {
+                viewModel.isRestoringRoomAnchor = false
+            }
+
+            guard viewModel.placedShelves.isEmpty || roomRootAnchor != nil else {
+                return
+            }
+
             for shelf in viewModel.sortedShelves {
                 guard shelfEntities[shelf.id] == nil,
                       let matrix = MatrixCoder.decode(shelf.anchorTransformData) else {
                     continue
                 }
 
-                // 旧保存値は棚本体の初期180度回転を含んでいるので、読み込み時だけ打ち消します。
-                let correctedMatrix = shelf.anchorTransformVersion == nil
-                    ? matrix * ShelfEntityFactory.savedAnchorCorrectionMatrix
-                    : matrix
-
-                placeShelf(shelf, with: correctedMatrix, in: arView)
+                placeShelf(shelf, with: matrix, in: arView)
                 restoreSavedItems(for: shelf)
             }
         }
@@ -216,7 +225,6 @@ struct ARShelfRealityView: UIViewRepresentable {
             syncTransformsToModel()
             syncShelfTransformsToModel()
             _ = viewModel.save(modelContext: modelContext)
-            captureWorldMapIfPossible(modelContext: modelContext)
         }
 
         func reloadSceneIfNeeded(in arView: ARView) {
@@ -237,7 +245,6 @@ struct ARShelfRealityView: UIViewRepresentable {
             syncTransformsToModel()
             syncShelfTransformsToModel()
             _ = viewModel.save(modelContext: modelContext)
-            captureWorldMapIfPossible(modelContext: modelContext, force: true)
         }
 
         func deleteIfNeeded(modelContext: ModelContext) {
@@ -254,6 +261,12 @@ struct ARShelfRealityView: UIViewRepresentable {
                 syncTransformsToModel()
                 syncShelfTransformsToModel()
                 _ = viewModel.deleteSelected(modelContext: modelContext)
+                if viewModel.placedShelves.isEmpty {
+                    roomRootAnchor?.removeFromParent()
+                    roomRootAnchor = nil
+                    viewModel.room.rootAnchorTransformData = nil
+                    viewModel.isRestoringRoomAnchor = false
+                }
                 updateCollisionAvailability()
                 updateGestureAvailability()
                 return
@@ -320,42 +333,115 @@ struct ARShelfRealityView: UIViewRepresentable {
             }
         }
 
-        private func captureWorldMapIfPossible(modelContext: ModelContext, force: Bool = false) {
-            guard let arView, isCapturingWorldMap == false else {
+        private func migrateLegacyShelfAnchorsToRootIfNeeded() {
+            guard viewModel.room.rootAnchorTransformData == nil else {
                 return
             }
 
-            if force == false,
-               viewModel.room.worldMapData != nil,
-               let lastWorldMapCaptureDate,
-               Date().timeIntervalSince(lastWorldMapCaptureDate) < 20 {
+            let placedShelves = viewModel.placedShelves
+            guard let firstShelf = placedShelves.first,
+                  let firstWorldTransform = resolvedWorldTransform(for: firstShelf) else {
                 return
             }
 
-            isCapturingWorldMap = true
-            arView.session.getCurrentWorldMap { [weak self] worldMap, error in
-                DispatchQueue.main.async {
-                    guard let self else {
-                        return
-                    }
+            viewModel.room.rootAnchorTransformData = MatrixCoder.encode(firstWorldTransform)
+            for shelf in placedShelves {
+                guard let worldTransform = resolvedWorldTransform(for: shelf) else {
+                    continue
+                }
 
-                    self.isCapturingWorldMap = false
-                    guard let worldMap else {
-                        if let error {
-                            self.viewModel.statusMessage = "ARの保存用マップを取得できませんでした: \(error.localizedDescription)"
-                        }
-                        return
-                    }
+                let localTransform = simd_inverse(firstWorldTransform) * worldTransform
+                shelf.anchorTransformData = MatrixCoder.encode(localTransform)
+                shelf.anchorTransformVersion = 3
+                shelf.updatedAt = .now
+            }
+            viewModel.room.updatedAt = .now
+        }
 
-                    self.viewModel.room.worldMapData = WorldMapCoder.encode(worldMap)
-                    self.viewModel.room.updatedAt = .now
-                    self.lastWorldMapCaptureDate = .now
+        private func resolvedWorldTransform(for shelf: Shelf) -> simd_float4x4? {
+            guard let matrix = MatrixCoder.decode(shelf.anchorTransformData) else {
+                return nil
+            }
 
-                    do {
-                        try modelContext.save()
-                    } catch {
-                        self.viewModel.statusMessage = "ARの保存用マップを保存できませんでした。"
-                    }
+            return shelf.anchorTransformVersion == nil
+                ? matrix * ShelfEntityFactory.savedAnchorCorrectionMatrix
+                : matrix
+        }
+
+        @discardableResult
+        private func ensureRoomRootAnchorIfNeeded(
+            in arView: ARView,
+            preferredRaycastResult: ARRaycastResult? = nil
+        ) -> AnchorEntity? {
+            if let roomRootAnchor {
+                return roomRootAnchor
+            }
+
+            let raycastResult = preferredRaycastResult ?? detectedPlaneRaycastResult(in: arView)
+            guard let raycastResult else {
+                return nil
+            }
+
+            let rootAnchor = AnchorEntity(raycastResult: raycastResult)
+            arView.scene.addAnchor(rootAnchor)
+            roomRootAnchor = rootAnchor
+            viewModel.room.rootAnchorTransformData = MatrixCoder.encode(rootAnchor.transformMatrix(relativeTo: nil))
+            viewModel.room.updatedAt = .now
+
+            return rootAnchor
+        }
+
+        @discardableResult
+        private func restoreRoomRootAnchorIfPossible(in arView: ARView) -> AnchorEntity? {
+            guard roomRootAnchor == nil,
+                  viewModel.pendingShelf == nil,
+                  viewModel.pendingGoods == nil,
+                  activeItemGestureCount == 0,
+                  activeShelfGestureCount == 0,
+                  viewModel.placedShelves.isEmpty == false,
+                  let raycastResult = detectedPlaneRaycastResult(in: arView) else {
+                return nil
+            }
+
+            let rootAnchor = AnchorEntity(raycastResult: raycastResult)
+            arView.scene.addAnchor(rootAnchor)
+            roomRootAnchor = rootAnchor
+            viewModel.room.rootAnchorTransformData = MatrixCoder.encode(rootAnchor.transformMatrix(relativeTo: nil))
+            viewModel.room.updatedAt = .now
+            viewModel.isRestoringRoomAnchor = false
+            viewModel.statusMessage = "検出した平面を基準に棚を復元しました。"
+            viewModel.requestSave()
+            return rootAnchor
+        }
+
+        private func detectedPlaneRaycastResult(in arView: ARView) -> ARRaycastResult? {
+            let centerPoint = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+
+            let strategies: [ARRaycastQuery.Target] = [.existingPlaneGeometry, .existingPlaneInfinite, .estimatedPlane]
+            for strategy in strategies {
+                if let result = arView.raycast(from: centerPoint, allowing: strategy, alignment: .horizontal).first {
+                    return result
+                }
+            }
+
+            return nil
+        }
+
+        func session(_ session: ARSession, didUpdate frame: ARFrame) {
+            guard let arView else {
+                return
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.roomRootAnchor == nil,
+                      self.viewModel.placedShelves.isEmpty == false,
+                      frame.camera.trackingState == .normal else {
+                    return
+                }
+
+                if self.restoreRoomRootAnchorIfPossible(in: arView) != nil {
+                    self.syncShelvesIfNeeded(in: arView)
                 }
             }
         }
@@ -405,8 +491,18 @@ struct ARShelfRealityView: UIViewRepresentable {
                 }
 
                 viewModel.captureUndoSnapshot(includeImageData: false)
-                placeShelf(pendingShelf, with: result.worldTransform, in: arView)
-                pendingShelf.anchorTransformData = MatrixCoder.encode(result.worldTransform)
+                guard let rootAnchor = ensureRoomRootAnchorIfNeeded(in: arView, preferredRaycastResult: result) else {
+                    viewModel.statusMessage = "部屋の基準位置を作成できませんでした。"
+                    return
+                }
+
+                let localTransform = viewModel.placedShelves.isEmpty
+                    ? matrix_identity_float4x4
+                    : simd_inverse(rootAnchor.transformMatrix(relativeTo: nil)) * result.worldTransform
+
+                placeShelf(pendingShelf, with: localTransform, in: arView)
+                pendingShelf.anchorTransformData = MatrixCoder.encode(localTransform)
+                pendingShelf.anchorTransformVersion = 3
                 pendingShelf.updatedAt = .now
                 viewModel.room.updatedAt = .now
                 viewModel.completePendingShelfPlacement(for: pendingShelf.id)
@@ -430,7 +526,7 @@ struct ARShelfRealityView: UIViewRepresentable {
 
             let generator = UIImpactFeedbackGenerator(style: .medium)
             generator.impactOccurred()
-            viewModel.statusMessage = "スクリーンショットを保存しています..."
+            viewModel.statusMessage = "共有シートを表示しています..."
 
             arView.snapshot(saveToHDR: false) { [weak self] image in
                 guard let self else {
@@ -444,50 +540,10 @@ struct ARShelfRealityView: UIViewRepresentable {
                     return
                 }
 
-                self.saveSnapshotToPhotos(image)
-            }
-        }
-
-        private func saveSnapshotToPhotos(_ image: UIImage) {
-            let saveImage = image.normalizedForRendering()
-            let performSave = { [weak self] in
-                PHPhotoLibrary.shared().performChanges({
-                    PHAssetChangeRequest.creationRequestForAsset(from: saveImage)
-                }) { success, error in
-                    DispatchQueue.main.async {
-                        guard let self else {
-                            return
-                        }
-
-                        if success {
-                            self.viewModel.statusMessage = "スクリーンショットを写真に保存しました。"
-                            self.onSnapshotSaved(saveImage)
-                        } else if let error {
-                            self.viewModel.statusMessage = "スクリーンショットを保存できませんでした: \(error.localizedDescription)"
-                        } else {
-                            self.viewModel.statusMessage = "スクリーンショットを保存できませんでした。"
-                        }
-                    }
-                }
-            }
-
-            switch PHPhotoLibrary.authorizationStatus(for: .addOnly) {
-            case .authorized, .limited:
-                performSave()
-            case .notDetermined:
-                PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-                    switch status {
-                    case .authorized, .limited:
-                        performSave()
-                    default:
-                        DispatchQueue.main.async {
-                            self.viewModel.statusMessage = "写真への保存権限がありません。"
-                        }
-                    }
-                }
-            default:
+                let normalizedImage = image.normalizedForRendering()
                 DispatchQueue.main.async {
-                    self.viewModel.statusMessage = "写真への保存権限がありません。"
+                    self.viewModel.statusMessage = "保存したい場合は共有シートから「画像を保存」を選んでください。"
+                    self.onSnapshotSaved(normalizedImage)
                 }
             }
         }
@@ -935,11 +991,16 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         private func placeShelf(_ shelf: Shelf, with transform: simd_float4x4, in arView: ARView) {
-            let anchor = AnchorEntity(world: transform)
+            guard let roomRootAnchor = ensureRoomRootAnchorIfNeeded(in: arView) else {
+                return
+            }
+
+            let anchor = Entity()
+            anchor.transform.matrix = transform
             let shelfEntity = ShelfEntityFactory.makeShelf(template: shelf.template)
             shelfEntity.name = shelf.id.uuidString
             anchor.addChild(shelfEntity)
-            arView.scene.addAnchor(anchor)
+            roomRootAnchor.addChild(anchor)
             anchorEntities[shelf.id] = anchor
             shelfEntities[shelf.id] = shelfEntity
             let recognizers = arView.installGestures([.translation, .rotation, .scale], for: shelfEntity)
@@ -1409,15 +1470,18 @@ struct ARShelfRealityView: UIViewRepresentable {
         }
 
         func syncShelfTransformsToModel() {
+            if let roomRootAnchor {
+                viewModel.room.rootAnchorTransformData = MatrixCoder.encode(roomRootAnchor.transformMatrix(relativeTo: nil))
+            }
+
             for (shelfID, shelfEntity) in shelfEntities {
                 guard let shelf = viewModel.room.shelves.first(where: { $0.id == shelfID }) else {
                     continue
                 }
-
-                let anchorTransform = shelfEntity.transformMatrix(relativeTo: nil)
+                let anchorTransform = shelfEntity.transformMatrix(relativeTo: roomRootAnchor)
                     * ShelfEntityFactory.savedAnchorCorrectionMatrix
                 shelf.anchorTransformData = MatrixCoder.encode(anchorTransform)
-                shelf.anchorTransformVersion = 2
+                shelf.anchorTransformVersion = 3
                 shelf.updatedAt = .now
             }
         }
@@ -1564,6 +1628,9 @@ struct ARShelfRealityView: UIViewRepresentable {
             shelfGestureRecognizers.values.flatMap { $0 }.forEach { $0.isEnabled = false }
             itemGestureRecognizers.values.flatMap { $0 }.forEach { $0.isEnabled = false }
 
+            roomRootAnchor?.removeFromParent()
+            roomRootAnchor = nil
+            viewModel.isRestoringRoomAnchor = false
             anchorEntities.values.forEach { $0.removeFromParent() }
             anchorEntities.removeAll()
             shelfEntities.removeAll()
@@ -1601,6 +1668,12 @@ struct ARShelfRealityView: UIViewRepresentable {
             didNotifyReady = true
             onReady()
         }
+    }
+}
+
+private extension simd_float4x4 {
+    var translation: SIMD3<Float> {
+        SIMD3<Float>(columns.3.x, columns.3.y, columns.3.z)
     }
 }
 

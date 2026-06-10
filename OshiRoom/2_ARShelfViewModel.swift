@@ -23,6 +23,7 @@ struct ARShelfUndoSnapshot {
 }
 
 struct ARShelfRoomSnapshot {
+    var rootAnchorTransformData: Data?
     var shelves: [ARShelfShelfSnapshot]
 }
 
@@ -69,6 +70,7 @@ final class ARShelfViewModel {
     var pendingGoods: PendingGoods?
     var pendingShelfID: UUID?
     var isProcessing = false
+    var isRestoringRoomAnchor = false
     var saveRequestToken = 0
     var deleteRequestToken = 0
     var sceneReloadRequestToken = 0
@@ -772,7 +774,7 @@ final class ARShelfViewModel {
 
     private func makeUndoSnapshot(includeImageData: Bool) -> ARShelfUndoSnapshot {
         ARShelfUndoSnapshot(
-            room: ARShelfRoomSnapshot(shelves: room.shelves.map { shelf in
+            room: ARShelfRoomSnapshot(rootAnchorTransformData: room.rootAnchorTransformData, shelves: room.shelves.map { shelf in
                 ARShelfShelfSnapshot(
                     id: shelf.id,
                     name: shelf.name,
@@ -821,6 +823,7 @@ final class ARShelfViewModel {
             modelContext.delete(shelf)
         }
         room.shelves.removeAll()
+        room.rootAnchorTransformData = snapshot.room.rootAnchorTransformData
 
         for shelfSnapshot in snapshot.room.shelves {
             let shelf = Shelf(

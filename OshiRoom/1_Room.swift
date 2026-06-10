@@ -9,6 +9,7 @@ final class Room {
     var displayOrder: Int = 0
     var createdAt: Date
     var updatedAt: Date
+    var rootAnchorTransformData: Data?
     var worldMapData: Data?
 
     @Relationship(deleteRule: .cascade, inverse: \Shelf.room)
@@ -20,6 +21,7 @@ final class Room {
         displayOrder: Int = 0,
         createdAt: Date = .now,
         updatedAt: Date = .now,
+        rootAnchorTransformData: Data? = nil,
         worldMapData: Data? = nil,
         shelves: [Shelf] = []
     ) {
@@ -28,6 +30,7 @@ final class Room {
         self.displayOrder = displayOrder
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.rootAnchorTransformData = rootAnchorTransformData
         self.worldMapData = worldMapData
         self.shelves = shelves
     }

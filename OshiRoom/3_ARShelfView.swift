@@ -67,6 +67,10 @@ struct ARShelfView: View {
             if isInterfaceHidden == false {
                 editControls
             }
+
+            if viewModel.isRestoringRoomAnchor {
+                RestoringRoomAnchorOverlay()
+            }
         }
         .sheet(isPresented: $isShowingAddGoods) {
             AddGoodsView { image, imagePath in
@@ -298,17 +302,87 @@ struct RoomEntryLoadingOverlay: View {
     }
 
     private var loadingDoor: some View {
+        TimelineView(.periodic(from: .now, by: 0.14)) { context in
+            let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.14) % 2
+
+            ZStack {
+                doorImage(systemName: "door.left.hand.closed")
+                    .opacity(phase == 0 ? 1 : 0)
+
+                doorImage(systemName: "door.left.hand.open")
+                    .opacity(phase == 0 ? 0 : 1)
+            }
+            .frame(width: 86, height: 86)
+            .background(
+                Circle()
+                    .fill(AppColors.textPrimary.opacity(0.28))
+            )
+            .animation(.easeInOut(duration: 0.1), value: phase)
+        }
+    }
+
+    private func doorImage(systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 48, weight: .semibold))
+            .foregroundStyle(AppColors.background)
+            .transition(
+                .opacity.combined(with: .scale(scale: 0.88))
+            )
+    }
+
+}
+
+struct RestoringRoomAnchorOverlay: View {
+    var body: some View {
+        VStack {
+            HStack(spacing: 10) {
+                loadingOrb
+
+                Text("読み込み中です")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.background.opacity(0.96))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(AppColors.background.opacity(0.18), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 6)
+            .padding(.top, 18)
+            .padding(.horizontal, 20)
+
+            Spacer()
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var loadingOrb: some View {
         TimelineView(.animation) { context in
-            let phase = Int(context.date.timeIntervalSinceReferenceDate * 2) % 2
-            Image(systemName: phase == 0 ? "door.left.hand.closed" : "door.left.hand.open")
-                .font(.system(size: 48, weight: .semibold))
-                .foregroundStyle(AppColors.background)
-                .frame(width: 86, height: 86)
-                .background(
-                    Circle()
-                        .fill(AppColors.textPrimary.opacity(0.28))
-                )
-                .symbolEffect(.pulse, options: .repeating)
+            let time = context.date.timeIntervalSinceReferenceDate
+            let pulse = 0.97 + (sin(time * 2.1) + 1) * 0.03
+
+            ZStack {
+                Circle()
+                    .fill(AppColors.background.opacity(0.18))
+                    .frame(width: 18, height: 18)
+
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                AppColors.background.opacity(0.96),
+                                AppColors.background.opacity(0.68)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 8, height: 8)
+            }
+            .frame(width: 18, height: 18)
+            .scaleEffect(pulse)
         }
     }
 }

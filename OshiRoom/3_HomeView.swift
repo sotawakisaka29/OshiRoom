@@ -10,6 +10,8 @@ struct HomeView: View {
     @State private var selectedRoom: Room?
     @State private var isShowingRoomLoading = false
     @State private var loadingRoomName = ""
+    @State private var roomEntryLoadingStartedAt: Date?
+    @State private var roomEntryLoadingTask: Task<Void, Never>?
     @State private var objectListRoom: Room?
     @State private var roomPendingRename: Room?
     @State private var renameErrorMessage: String?
@@ -148,9 +150,7 @@ struct HomeView: View {
             }
             .navigationDestination(item: $selectedRoom) { room in
                 ARShelfView(room: room) {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        isShowingRoomLoading = false
-                    }
+                    finishRoomEntryLoading()
                 }
             }
             .navigationDestination(isPresented: $isShowingScannedModels) {
@@ -225,9 +225,36 @@ struct HomeView: View {
 
     private func beginRoomEntry(_ room: Room) {
         loadingRoomName = room.name
+        roomEntryLoadingStartedAt = .now
         isShowingRoomLoading = true
         DispatchQueue.main.async {
             selectedRoom = room
+        }
+    }
+
+    private func finishRoomEntryLoading() {
+        roomEntryLoadingTask?.cancel()
+
+        roomEntryLoadingTask = Task {
+            let minimumDisplayDuration: TimeInterval = 1.0
+            let elapsed = Date().timeIntervalSince(roomEntryLoadingStartedAt ?? .now)
+            let remaining = max(0, minimumDisplayDuration - elapsed)
+
+            if remaining > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+                } catch {
+                    return
+                }
+            }
+
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    isShowingRoomLoading = false
+                }
+                roomEntryLoadingStartedAt = nil
+                roomEntryLoadingTask = nil
+            }
         }
     }
 
