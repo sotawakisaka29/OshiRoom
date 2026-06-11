@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 2,
+  "appName": "My Oshi Room",
+  "themeId": "bloom-roast",
+  "connectedCanvas": true,
+  "locales": [
+    "ja"
+  ],
+  "locale": "ja",
+  "device": "iphone",
+  "orientation": "portrait",
+  "appIcon": "/app-icon.png",
+  "slidesByDevice": {
+    "iphone": [
+      {
+        "id": "oshi_02_scan",
+        "layout": "device-bottom",
+        "label": {
+          "ja": "3Dスキャン"
+        },
+        "headline": {
+          "ja": "ぬいもグッズも\nその場で3D化。"
+        },
+        "screenshot": "/screenshots/apple/iphone/ja/02.png"
+      },
+      {
+        "id": "oshi_03_ar",
+        "layout": "device-bottom",
+        "label": {
+          "ja": "AR展示"
+        },
+        "headline": {
+          "ja": "AR空間に\nお気に入りを飾れる。"
+        },
+        "screenshot": "/screenshots/apple/iphone/ja/01.png",
+        "inverted": true,
+        "transforms": {
+          "caption": {
+            "x": 61.134858697410664,
+            "y": 234.3805644215693,
+            "width": 1228,
+            "height": 803,
+            "rotation": 0,
+            "zIndex": 4
+          }
+        }
+      },
+      {
+        "id": "oshi_01_home",
+        "layout": "hero",
+        "label": {
+          "ja": "推し空間"
+        },
+        "headline": {
+          "ja": "推しグッズを\nひとつの部屋に。"
+        },
+        "screenshot": "/screenshots/apple/iphone/ja/05.png",
+        "transforms": {
+          "device": {
+            "x": 165.53366902724724,
+            "y": 744.7116485788112,
+            "width": 1013.6355043227666,
+            "height": 2064.96,
+            "rotation": 0,
+            "zIndex": 3
+          },
+          "caption": {
+            "x": 103.12971576227392,
+            "y": 258.12,
+            "width": 1108.8,
+            "height": 803.0400000000001,
+            "rotation": 0,
+            "zIndex": 4
+          }
+        }
+      },
+      {
+        "id": "oshi_04_catalog",
+        "layout": "device-bottom",
+        "label": {
+          "ja": "図鑑整理"
+        },
+        "headline": {
+          "ja": "集めた推しを\n一覧で見返せる。"
+        },
+        "screenshot": "/screenshots/apple/iphone/ja/03.png",
+        "transforms": {
+          "caption": {
+            "x": 115.48113695090387,
+            "y": 246.73198966408273,
+            "width": 1108.8,
+            "height": 803.0400000000001,
+            "rotation": 0,
+            "zIndex": 4
+          }
+        }
+      },
+      {
+        "id": "oshi_05_detail",
+        "layout": "device-bottom",
+        "label": {
+          "ja": "お気に入り"
+        },
+        "headline": {
+          "ja": "ひとつひとつの好き\nがもっと近くなる。"
+        },
+        "screenshot": "/screenshots/apple/iphone/ja/04.png"
+      }
+    ],
+    "android": [],
+    "ipad": [],
+    "android-7": [],
+    "android-10": [],
+    "feature-graphic": []
+  }
+}

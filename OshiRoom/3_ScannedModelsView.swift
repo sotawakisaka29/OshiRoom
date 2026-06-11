@@ -14,25 +14,38 @@ struct ScannedModelsView: View {
 	@State private var isShowingDeleteAlert = false
 	@FocusState private var focusedEditingModelID: ScannedModel.ID?
 	@State private var isShowingModelScanner = false
+	@State private var isShowingHelpTips = false
 	@State private var sortOption: ScannedModelSortOption = .addedDate
 	@State private var sortDirection: ScannedModelSortDirection = .descending
 
 	var body: some View {
 		let displayedModels = sortedModels()
 
-		Group {
-			if displayedModels.isEmpty {
-				emptyState
-			} else {
-				List {
-					ForEach(displayedModels) { model in
-						row(for: model)
-						.listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+		ZStack {
+			Group {
+				if displayedModels.isEmpty {
+					emptyState
+				} else {
+					List {
+						ForEach(displayedModels) { model in
+							row(for: model)
+							.listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+						}
+					}
+					.listStyle(.plain)
+					.scrollContentBackground(.hidden)
+					.background(AppColors.groupedBackground)
+				}
+			}
+			.toolbar(isShowingHelpTips ? .hidden : .visible, for: .navigationBar)
+			.overlay {
+				if isShowingHelpTips {
+					ScannedModelsTipsOverlay {
+						withAnimation(.snappy(duration: 0.22)) {
+							isShowingHelpTips = false
+						}
 					}
 				}
-				.listStyle(.plain)
-				.scrollContentBackground(.hidden)
-				.background(AppColors.groupedBackground)
 			}
 		}
 		.navigationTitle("3Dモデル")
@@ -54,6 +67,15 @@ struct ScannedModelsView: View {
 				} label: {
 					Image(systemName: "arrow.up.arrow.down")
 				}
+
+				Button {
+					withAnimation(.snappy(duration: 0.22)) {
+						isShowingHelpTips = true
+					}
+				} label: {
+					Image(systemName: "questionmark.circle")
+				}
+				.accessibilityLabel("ヘルプ")
 
 				Button {
 					isShowingModelScanner = true
@@ -368,18 +390,187 @@ extension ScannedModelsView {
 				.background(methodColor(for: model), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
 		}
 	}
+}
 
-	private func methodColor(for model: ScannedModel) -> Color {
-		switch model.method {
-		case .lidar:
-			.blue
-		case .photogrammetry:
-			.orange
-		case .objectCapture:
-			.indigo
-		case .trueDepth:
-			.green
+private struct ScannedModelsTipPage: Identifiable, CaseIterable {
+	let id = UUID()
+	let title: String
+	let symbolName: String
+	let items: [String]
+
+	static let allCases: [ScannedModelsTipPage] = [
+		ScannedModelsTipPage(
+			title: "スキャン方法",
+			symbolName: "camera.viewfinder",
+			items: [
+				"右上のカメラから物体スキャンを始めます。",
+				"アプリ内では、撮影補助から3Dモデルを作る流れを案内します。",
+				"スキャンが終わったら、この一覧にモデルが追加されます。"
+			]
+		),
+		ScannedModelsTipPage(
+			title: "LiDAR対応端末",
+			symbolName: "ipad.gen1",
+			items: [
+				"LiDAR搭載端末では、より安定したスキャンがしやすくなります。",
+				"対応状況は端末や利用するスキャン方式によって変わります。",
+				"うまくいかないときは、まずLiDAR対応の実機かを確認してください。\n(iPhone Proシリーズ, iPad Proシリーズが対応)"
+			]
+		),
+		ScannedModelsTipPage(
+			title: "スキャンのコツ",
+			symbolName: "lightbulb",
+			items: [
+				"対象物のまわりをゆっくり回って、いろいろな角度から撮影します。",
+				"明るく、背景がごちゃつきすぎない場所だと安定しやすいです。",
+				"急がず、対象物の輪郭が見えやすい状態を保つのがコツです。"
+			]
+		),
+		ScannedModelsTipPage(
+			title: "名前を変える",
+			symbolName: "pencil",
+			items: [
+				"モデル名は一覧の項目を長押しすると変更できます。",
+				"入力したらキーボードの完了で保存されます。",
+				"整理しやすい名前にしておくと、AR空間で選びやすくなります。"
+			]
+		)
+	]
+}
+
+private struct ScannedModelsTipsOverlay: View {
+	let onDismiss: () -> Void
+	@State private var selectedPage = 0
+
+	private let pages = ScannedModelsTipPage.allCases
+
+	var body: some View {
+		ZStack {
+			Color.black.opacity(0.52)
+				.ignoresSafeArea()
+				.onTapGesture {
+					onDismiss()
+				}
+
+			VStack(alignment: .leading, spacing: 18) {
+				HStack(alignment: .top, spacing: 12) {
+					VStack(alignment: .leading, spacing: 6) {
+						Text("3Dモデルの使い方")
+							.font(.system(.title2, design: .rounded).weight(.bold))
+							.foregroundStyle(AppColors.textPrimary)
+						Text("横にスライドして、スキャンや名前変更の流れを見られます。")
+							.font(.callout)
+							.foregroundStyle(AppColors.textSecondary)
+					}
+
+					Spacer(minLength: 0)
+
+					Button(action: onDismiss) {
+						Image(systemName: "xmark")
+							.font(.footnote.weight(.semibold))
+							.foregroundStyle(AppColors.textSecondary)
+							.frame(width: 32, height: 32)
+							.background(AppColors.elevatedSurface, in: Circle())
+							.overlay(Circle().stroke(AppColors.separator, lineWidth: 1))
+					}
+					.buttonStyle(.plain)
+				}
+
+				VStack(spacing: 14) {
+					TabView(selection: $selectedPage) {
+						ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+							ScannedModelsTipPageCard(page: page)
+								.tag(index)
+								.padding(.horizontal, 1)
+						}
+					}
+					.tabViewStyle(.page(indexDisplayMode: .never))
+					.frame(height: 280)
+
+					HStack(spacing: 8) {
+						ForEach(Array(pages.enumerated()), id: \.offset) { index, _ in
+							Capsule()
+								.fill(index == selectedPage ? AppColors.textPrimary : AppColors.separator)
+								.frame(width: index == selectedPage ? 18 : 8, height: 8)
+								.animation(.snappy(duration: 0.22), value: selectedPage)
+						}
+					}
+					.frame(maxWidth: .infinity)
+
+					Text("スワイプで次の項目へ")
+						.font(.caption.weight(.semibold))
+						.foregroundStyle(AppColors.textMuted)
+				}
+			}
+			.padding(22)
+			.frame(maxWidth: 360)
+			.background(
+				RoundedRectangle(cornerRadius: 28, style: .continuous)
+					.fill(AppColors.background)
+					.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+			)
+			.overlay(
+				RoundedRectangle(cornerRadius: 28, style: .continuous)
+					.stroke(AppColors.separator, lineWidth: 1)
+			)
+			.shadow(color: Color.black.opacity(0.24), radius: 30, x: 0, y: 16)
+			.padding(.horizontal, 20)
+			.transition(.scale(scale: 0.96).combined(with: .opacity))
 		}
+	}
+}
+
+private struct ScannedModelsTipPageCard: View {
+	let page: ScannedModelsTipPage
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			HStack(spacing: 10) {
+				Image(systemName: page.symbolName)
+					.font(.subheadline.weight(.semibold))
+					.foregroundStyle(AppColors.textPrimary)
+					.frame(width: 28, height: 28)
+					.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+				Text(page.title)
+					.font(.headline.weight(.semibold))
+					.foregroundStyle(AppColors.textPrimary)
+			}
+
+			VStack(alignment: .leading, spacing: 8) {
+				ForEach(page.items, id: \.self) { item in
+					HStack(alignment: .top, spacing: 8) {
+						Circle()
+							.fill(AppColors.textPrimary)
+							.frame(width: 5, height: 5)
+							.padding(.top, 6)
+						Text(item)
+							.font(.subheadline)
+							.foregroundStyle(AppColors.textSecondary)
+							.fixedSize(horizontal: false, vertical: true)
+					}
+				}
+			}
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+		.padding(16)
+		.background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: 20, style: .continuous)
+				.stroke(AppColors.separator, lineWidth: 1)
+		)
+	}
+}
+
+private func methodColor(for model: ScannedModel) -> Color {
+	switch model.method {
+	case .lidar:
+		.blue
+	case .photogrammetry:
+		.orange
+	case .objectCapture:
+		.indigo
+	case .trueDepth:
+		.green
 	}
 }
 

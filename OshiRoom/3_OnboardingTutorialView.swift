@@ -18,7 +18,7 @@ struct OnboardingTutorialView: View {
 
 				VStack(spacing: isCompactHeight ? 14 : 22) {
 					header
-						.padding(.horizontal, 24)
+						.padding(.horizontal, 16)
 						.padding(.top, isCompactHeight ? 14 : 26)
 
 					TabView(selection: $currentPage) {
@@ -30,18 +30,24 @@ struct OnboardingTutorialView: View {
 								isCompactHeight: isCompactHeight
 							)
 							.tag(index)
-							.padding(.horizontal, 20)
+							.padding(.horizontal, 34)
 						}
 					}
 					.tabViewStyle(.page(indexDisplayMode: .never))
 
 					footer
-						.padding(.horizontal, 24)
-						.padding(.bottom, isCompactHeight ? 14 : 24)
+						.padding(.horizontal, 16)
+						.padding(.bottom, isCompactHeight ? 8 : 12)
 				}
 			}
 		}
 		.interactiveDismissDisabled()
+		.onAppear {
+			OrientationLockController.setPortraitOnly(true)
+		}
+		.onDisappear {
+			OrientationLockController.setPortraitOnly(false)
+		}
 	}
 
 	private var background: some View {
@@ -168,18 +174,19 @@ private struct OnboardingStepPage: View {
 
     var body: some View {
         let pageSpacing: CGFloat = isCompactHeight ? 12 : 20
-        let cardPadding: CGFloat = isCompactHeight ? 18 : 22
+        let cardHorizontalPadding: CGFloat = isCompactHeight ? 12 : 16
+        let cardVerticalPadding: CGFloat = isCompactHeight ? 18 : 22
         let titleSpacing: CGFloat = isCompactHeight ? 8 : 10
         let illustrationHeight: CGFloat = {
             switch step {
             case .intro:
-                return isCompactHeight ? 150 : 300
+                return isCompactHeight ? 180 : 230
             case .room:
                 return isCompactHeight ? 180 : 230
             case .shelf:
                 return isCompactHeight ? 176 : 224
             case .goods:
-                return isCompactHeight ? 148 : 194
+                return isCompactHeight ? 136 : 180
             case .edit:
                 return isCompactHeight ? 188 : 238
             case .catalog:
@@ -189,19 +196,23 @@ private struct OnboardingStepPage: View {
         let pointsInternalTopPadding: CGFloat = 0
         let pointsBoxTopOffset: CGFloat = {
             switch step {
-            case .intro:
-                return isCompactHeight ? 18 : 24
             case .goods:
-                return isCompactHeight ? 18 : 24
+                return isCompactHeight ? 24 : 28
             default:
                 return isCompactHeight ? 8 : 12
             }
         }()
-        let illustrationTopPadding: CGFloat = step == .goods ? (isCompactHeight ? 12 : 16) : 0
-        let contentYOffset: CGFloat = step == .intro ? (isCompactHeight ? 10 : 14) : 0
+        let bodyTopPadding: CGFloat = isCompactHeight ? 8 : 12
+        let illustrationTopPadding: CGFloat = step == .goods ? (isCompactHeight ? 16 : 22) : 0
+        let contentYOffset: CGFloat = step == .goods ? (isCompactHeight ? 10 : 14) : 0
 
         GeometryReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
+            let contentScale: CGFloat = min(
+                1.08,
+                max(0.86, min(proxy.size.width / 390.0, proxy.size.height / 844.0) * 1.08)
+            )
+
+            VStack {
                 VStack(spacing: pageSpacing) {
 					HStack {
 						Text(String(format: "%02d / %02d", index + 1, totalCount))
@@ -219,7 +230,6 @@ private struct OnboardingStepPage: View {
 							.font(.system(isCompactHeight ? .title3 : .largeTitle, design: .rounded).weight(.heavy))
 							.foregroundStyle(.white)
 							.lineLimit(2)
-							.minimumScaleFactor(0.82)
 
 						Text(step.subtitle)
 							.font(isCompactHeight ? .subheadline : .body)
@@ -258,12 +268,17 @@ private struct OnboardingStepPage: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 28, style: .continuous)
                             .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                    )
+					)
                     .padding(.top, pointsBoxTopOffset)
                     .offset(y: contentYOffset)
                 }
-				.padding(cardPadding)
+				.padding(.top, bodyTopPadding)
+				.padding(.horizontal, cardHorizontalPadding)
+				.padding(.vertical, cardVerticalPadding)
+				.scaleEffect(contentScale, anchor: .top)
+				.frame(maxWidth: .infinity, alignment: .top)
 				.frame(minHeight: proxy.size.height, alignment: .top)
+				.frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .top)
 			}
 			.clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
 			.background(
@@ -331,24 +346,24 @@ private enum OnboardingStep: CaseIterable {
 	var title: String {
 		switch self {
 		case .intro:
-			return "推しの世界を、ARの部屋に"
+			return "推しをARの部屋に"
 		case .room:
-			return "最初に部屋を作ります"
+			return "部屋を作る"
 		case .shelf:
-			return "次にARで棚を置きます"
+			return "ARで棚を配置"
 		case .goods:
-			return "写真や3Dモデルを追加します"
+			return "モデルを追加"
 		case .edit:
-			return "配置したら、あとで調整できます"
+			return "配置と調整"
 		case .catalog:
-			return "最後は図鑑で振り返れます"
+			return "図鑑で振り返り"
 		}
 	}
 
 	var subtitle: String {
 		switch self {
 		case .intro:
-			return "このアプリでは、推しの写真やグッズを自分だけのAR空間に並べて楽しめます。"
+			return "推しの写真やグッズを自分だけのAR空間に並べて楽しめます。"
 		case .room:
 			return "ライブや誕生日など、テーマごとに部屋を分けると整理しやすくなります。"
 		case .shelf:
@@ -413,53 +428,52 @@ private struct TutorialIntroScene: View {
 	let isCompactHeight: Bool
 
 	var body: some View {
-		let outerPadding: CGFloat = isCompactHeight ? 16 : 22
+		let outerPadding: CGFloat = isCompactHeight ? 10 : 14
 		let cardSpacing: CGFloat = isCompactHeight ? 14 : 18
-		let outerCardHeight: CGFloat = isCompactHeight ? 184 : 238
-		let panelHeight: CGFloat = isCompactHeight ? 94 : 124
+		let outerCardHeight: CGFloat = isCompactHeight ? 160 : 212
+		let panelHeight: CGFloat = isCompactHeight ? 84 : 110
 
-		VStack(spacing: isCompactHeight ? 16 : 22) {
+		VStack(spacing: isCompactHeight ? 14 : 18) {
 			RoundedRectangle(cornerRadius: 30, style: .continuous)
 				.fill(Color.white.opacity(0.08))
 				.frame(height: outerCardHeight)
 				.overlay {
 					VStack(spacing: cardSpacing) {
-						HStack {
-							Spacer()
-							Image(systemName: "sparkles")
-								.font(.system(size: isCompactHeight ? 20 : 26, weight: .bold))
-								.foregroundStyle(.white)
-						}
+						ZStack {
+							RoundedRectangle(cornerRadius: 24, style: .continuous)
+								.fill(Color.white.opacity(0.05))
+								.frame(height: panelHeight + 6)
+								.offset(y: 6)
 
-						RoundedRectangle(cornerRadius: 24, style: .continuous)
-							.fill(Color(red: 0.40, green: 0.72, blue: 0.96).opacity(0.18))
-							.frame(maxWidth: .infinity)
-							.frame(height: panelHeight)
-							.overlay {
-								HStack(spacing: isCompactHeight ? 22 : 30) {
-									RoundedRectangle(cornerRadius: 16, style: .continuous)
-										.fill(Color(red: 0.98, green: 0.72, blue: 0.30))
-										.frame(width: isCompactHeight ? 46 : 58, height: isCompactHeight ? 64 : 80)
-										.rotationEffect(.degrees(-10))
+							RoundedRectangle(cornerRadius: 24, style: .continuous)
+								.fill(Color(red: 0.40, green: 0.72, blue: 0.96).opacity(0.18))
+								.frame(maxWidth: .infinity)
+								.frame(height: panelHeight)
+								.overlay {
+									HStack(spacing: isCompactHeight ? 22 : 30) {
+										RoundedRectangle(cornerRadius: 16, style: .continuous)
+											.fill(Color(red: 0.98, green: 0.72, blue: 0.30))
+											.frame(width: isCompactHeight ? 42 : 54, height: isCompactHeight ? 58 : 74)
+											.rotationEffect(.degrees(-8))
 
-									RoundedRectangle(cornerRadius: 16, style: .continuous)
-										.fill(Color(red: 0.93, green: 0.48, blue: 0.43))
-										.frame(width: isCompactHeight ? 46 : 58, height: isCompactHeight ? 64 : 80)
-										.rotationEffect(.degrees(8))
+										RoundedRectangle(cornerRadius: 16, style: .continuous)
+											.fill(Color(red: 0.93, green: 0.48, blue: 0.43))
+											.frame(width: isCompactHeight ? 42 : 54, height: isCompactHeight ? 58 : 74)
+											.rotationEffect(.degrees(8))
+									}
 								}
-							}
+						}
 
 						HStack(spacing: isCompactHeight ? 10 : 12) {
 							TutorialMiniTab(label: "ホーム", symbolName: "house.fill")
-							TutorialMiniTab(label: "AR", symbolName: "arkit")
 							TutorialMiniTab(label: "図鑑", symbolName: "square.grid.2x2.fill")
 						}
 					}
 					.padding(outerPadding)
 				}
 		}
-		.padding(.top, isCompactHeight ? 10 : 14)
-		.padding(.horizontal, isCompactHeight ? 14 : 20)
+		.padding(.top, isCompactHeight ? 6 : 10)
+		.padding(.horizontal, isCompactHeight ? 8 : 12)
 	}
 }
 
@@ -492,9 +506,9 @@ private struct TutorialRoomScene: View {
 				TutorialPill(text: "名前だけで作成OK", tint: .white)
 			}
 		}
-		.padding(isCompactHeight ? 16 : 22)
+		.padding(isCompactHeight ? 12 : 16)
 		.background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-		.padding(isCompactHeight ? 10 : 16)
+		.padding(isCompactHeight ? 12 : 16)
 	}
 }
 
@@ -530,9 +544,9 @@ private struct TutorialShelfScene: View {
 					.padding(isCompactHeight ? 12 : 16)
 				}
 		}
-		.padding(isCompactHeight ? 16 : 22)
+		.padding(isCompactHeight ? 12 : 16)
 		.background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-		.padding(isCompactHeight ? 10 : 16)
+		.padding(isCompactHeight ? 12 : 16)
 	}
 }
 
@@ -571,10 +585,10 @@ private struct TutorialGoodsScene: View {
 					)
 			}
 		}
-		.padding(.horizontal, isCompactHeight ? 18 : 24)
+		.padding(.horizontal, isCompactHeight ? 10 : 14)
 		.padding(.vertical, isCompactHeight ? 12 : 16)
 		.background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-		.padding(.horizontal, isCompactHeight ? 14 : 20)
+		.padding(.horizontal, isCompactHeight ? 10 : 14)
 		.padding(.vertical, isCompactHeight ? 10 : 16)
 	}
 }
@@ -597,9 +611,9 @@ private struct TutorialEditScene: View {
 				TutorialToolButton(title: "削除", symbolName: "trash", tint: Color(red: 0.96, green: 0.48, blue: 0.43))
 			}
 		}
-		.padding(isCompactHeight ? 16 : 22)
+		.padding(isCompactHeight ? 12 : 16)
 		.background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-		.padding(isCompactHeight ? 10 : 16)
+		.padding(isCompactHeight ? 12 : 16)
 	}
 }
 
@@ -627,9 +641,9 @@ private struct TutorialCatalogScene: View {
 				TutorialBadge(label: "図鑑で一覧", symbolName: "square.grid.2x2.fill")
 			}
 		}
-		.padding(isCompactHeight ? 16 : 22)
+		.padding(isCompactHeight ? 12 : 16)
 		.background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-		.padding(isCompactHeight ? 10 : 16)
+		.padding(isCompactHeight ? 12 : 16)
 	}
 }
 

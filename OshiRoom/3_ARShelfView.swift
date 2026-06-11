@@ -10,6 +10,7 @@ struct ARShelfView: View {
     @State private var isShowingGoodsShelfPicker = false
     @State private var isShowingAddShelf = false
     @State private var isInterfaceHidden = false
+    @State private var isShowingHelpTips = false
     @State private var snapshotToShare: SharedSnapshot?
     let onReady: () -> Void
 
@@ -35,12 +36,25 @@ struct ARShelfView: View {
         .toolbar {
             if isInterfaceHidden == false {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        isInterfaceHidden = true
-                        viewModel.statusMessage = "UIを非表示にしました。オブジェクト以外をタップすると再表示できます。"
-                    } label: {
-                        Image(systemName: "eye.slash")
+                    HStack(spacing: 10) {
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                isShowingHelpTips = true
+                            }
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                        }
+
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                isInterfaceHidden = true
+                            }
+                            viewModel.statusMessage = "UIを非表示にしました。オブジェクト以外をタップすると再表示できます。"
+                        } label: {
+                            Image(systemName: "eye.slash")
+                        }
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -70,6 +84,14 @@ struct ARShelfView: View {
 
             if viewModel.isRestoringRoomAnchor {
                 RestoringRoomAnchorOverlay()
+            }
+
+            if isShowingHelpTips {
+                ARShelfTipsOverlay {
+                    withAnimation(.snappy(duration: 0.22)) {
+                        isShowingHelpTips = false
+                    }
+                }
             }
         }
         .sheet(isPresented: $isShowingAddGoods, onDismiss: {
@@ -431,6 +453,175 @@ struct BottomMenuItem: View {
         .frame(maxWidth: .infinity)
         .frame(height: 64)
         .background(isActive ? AppColors.textPrimary : AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(AppColors.separator, lineWidth: 1)
+        )
+    }
+}
+
+struct ARShelfTipsOverlay: View {
+    let onDismiss: () -> Void
+    @State private var selectedPage = 0
+
+    private let pages = ARShelfTipPage.allCases
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.52)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    onDismiss()
+                }
+
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("ARの使い方")
+                            .font(.system(.title2, design: .rounded).weight(.bold))
+                            .foregroundStyle(AppColors.textPrimary)
+                        Text("Tips")
+                            .font(.callout)
+                            .foregroundStyle(AppColors.textSecondary)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(AppColors.textSecondary)
+                            .frame(width: 32, height: 32)
+                            .background(AppColors.elevatedSurface, in: Circle())
+                            .overlay(Circle().stroke(AppColors.separator, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                VStack(spacing: 14) {
+                    TabView(selection: $selectedPage) {
+                        ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+                            ARShelfTipPageCard(page: page)
+                                .tag(index)
+                                .padding(.horizontal, 1)
+                        }
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .frame(height: 270)
+
+                    HStack(spacing: 8) {
+                        ForEach(Array(pages.enumerated()), id: \.offset) { index, _ in
+                            Capsule()
+                                .fill(index == selectedPage ? AppColors.textPrimary : AppColors.separator)
+                                .frame(width: index == selectedPage ? 18 : 8, height: 8)
+                                .animation(.snappy(duration: 0.22), value: selectedPage)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    Text("スワイプで次の項目へ")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppColors.textMuted)
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: 360)
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(AppColors.background)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(AppColors.separator, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.24), radius: 30, x: 0, y: 16)
+            .padding(.horizontal, 20)
+            .transition(.scale(scale: 0.96).combined(with: .opacity))
+        }
+    }
+}
+
+private struct ARShelfTipPage: Identifiable, CaseIterable {
+    let id = UUID()
+    let title: String
+    let symbolName: String
+    let items: [String]
+
+    static let allCases: [ARShelfTipPage] = [
+        ARShelfTipPage(
+            title: "操作パネル",
+            symbolName: "slider.horizontal.3",
+            items: [
+                "「棚 / グッズ / 複数」で編集モードを切り替えます。",
+                "「棚を追加」「グッズ追加」から、置きたいものを足せます。",
+                "「高さ調整」「回転」「削除」で、選択中の対象をまとめて調整できます。"
+            ]
+        ),
+        ARShelfTipPage(
+            title: "撮影してグッズを追加",
+            symbolName: "camera.fill",
+            items: [
+                "「グッズ追加」を押して、写真選択か「カメラで撮影」を選びます。",
+                "撮影後は背景除去やプレビューを確認して、「追加する」でAR空間に入れます。",
+                "保存済みの3Dモデルがある場合は、「3Dモデルを選択」からも追加できます。"
+            ]
+        ),
+        ARShelfTipPage(
+            title: "うまくいかないとき",
+            symbolName: "hand.tap.fill",
+            items: [
+								"棚を読み込む際には画面が重くなることがあります",
+                "棚やオブジェクトは、平面の上に置くとうまくいきやすいです。",
+                "右上の「戻る」ボタンで、前の操作を取り消せます。"
+            ]
+        ),
+        ARShelfTipPage(
+            title: "楽しむ",
+            symbolName: "sparkles",
+            items: [
+                "右上の非表示ボタンでUIを消すと、AR空間そのものに集中できます。",
+                "UIを非表示にしたあとに画面を長押しすると、スクリーンショットの共有シートが開きます。",
+                "端末を動かして角度を変えながら、AR空間を自由に楽しめます。"
+            ]
+        )
+    ]
+}
+
+private struct ARShelfTipPageCard: View {
+    let page: ARShelfTipPage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: page.symbolName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.textPrimary)
+                    .frame(width: 28, height: 28)
+                    .background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                Text(page.title)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(AppColors.textPrimary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(page.items, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(AppColors.textPrimary)
+                            .frame(width: 5, height: 5)
+                            .padding(.top, 6)
+                        Text(item)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(16)
+        .background(AppColors.elevatedSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(AppColors.separator, lineWidth: 1)

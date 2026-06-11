@@ -1,9 +1,12 @@
 import Foundation
 import SwiftData
+import UIKit
 import SwiftUI
 
 @main
 struct OshiRoomApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             AppRootView()
@@ -100,6 +103,52 @@ struct OshiRoomApp: App {
         }
 
         try? modelContext.save()
+    }
+}
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        supportedInterfaceOrientationsFor window: UIWindow?
+    ) -> UIInterfaceOrientationMask {
+        OrientationLockController.supportedInterfaceOrientations
+    }
+}
+
+enum OrientationLockController {
+    private static var isPortraitOnly = false
+
+    static var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        if isPortraitOnly {
+            return .portrait
+        }
+
+        return UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown
+    }
+
+    static func setPortraitOnly(_ enabled: Bool) {
+        guard isPortraitOnly != enabled else {
+            return
+        }
+
+        isPortraitOnly = enabled
+        applyCurrentOrientationPreferences()
+    }
+
+    static func applyCurrentOrientationPreferences() {
+        guard #available(iOS 16.0, *) else {
+            return
+        }
+
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
+            return
+        }
+
+        let preferences = UIWindowScene.GeometryPreferences.iOS(
+            interfaceOrientations: supportedInterfaceOrientations
+        )
+
+        try? scene.requestGeometryUpdate(preferences)
     }
 }
 
