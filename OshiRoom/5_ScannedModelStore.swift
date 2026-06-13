@@ -28,7 +28,7 @@ enum ScannedModelStore {
         try data.write(to: metadataURL, options: [.atomic])
 
         let modelPath = modelFileName(for: id)
-        if let modelURL = url(forRelativePath: modelPath) {
+        if let modelURL = fileURL(forRelativePath: modelPath) {
             try exportLiDARSnapshot(snapshot, to: modelURL)
         }
 
@@ -57,7 +57,7 @@ enum ScannedModelStore {
         try data.write(to: metadataURL, options: [.atomic])
 
         let modelPath = modelFileName(for: id)
-        if let modelURL = url(forRelativePath: modelPath) {
+        if let modelURL = fileURL(forRelativePath: modelPath) {
             try exportTrueDepthSnapshot(snapshot, to: modelURL)
         }
 
@@ -138,6 +138,14 @@ enum ScannedModelStore {
         }
 
         return resolvedFileURL(forRelativePath: relativePath, in: rootURL)
+    }
+
+    static func fileURL(forRelativePath relativePath: String) -> URL? {
+        guard let rootURL = try? rootURL() else {
+            return nil
+        }
+
+        return rootURL.appendingPathComponent(relativePath)
     }
 
     static func resolvedFileURL(forRelativePath relativePath: String, in rootURL: URL) -> URL? {

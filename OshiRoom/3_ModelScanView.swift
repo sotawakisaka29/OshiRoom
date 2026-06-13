@@ -302,7 +302,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
 
 		do {
 			let directoryPath = try ScannedModelStore.createCaptureDirectory(for: currentModelID)
-			guard let directoryURL = ScannedModelStore.url(forRelativePath: directoryPath) else {
+			guard let directoryURL = ScannedModelStore.fileURL(forRelativePath: directoryPath) else {
 				statusMessage = "ObjectCaptureの保存先を作成できませんでした。"
 				return
 			}
@@ -379,7 +379,7 @@ struct ObjectCapturePhotogrammetryScanView: View {
 
 	private func processObjectCapturePhotogrammetry(inputURL: URL, captureDirectoryPath: String) async {
 		let outputPath = ScannedModelStore.modelFileName(for: currentModelID)
-		guard let outputURL = ScannedModelStore.url(forRelativePath: outputPath) else {
+		guard let outputURL = ScannedModelStore.fileURL(forRelativePath: outputPath) else {
 			statusMessage = "出力先を作成できませんでした。"
 			isProcessing = false
 			return
