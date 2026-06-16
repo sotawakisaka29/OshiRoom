@@ -48,6 +48,11 @@ struct ARShelfRealityView: UIViewRepresentable {
         coordinator.persistBeforeDismiss()
     }
 
+    private enum RotationAxis {
+        case firstAxis
+        case secondAxis
+    }
+
     final class Coordinator: NSObject, ARSessionDelegate {
         private struct InteractionUpdateState: Equatable {
             var mode: ARInteractionMode
@@ -88,6 +93,7 @@ struct ARShelfRealityView: UIViewRepresentable {
         private var goodsGroupScaleStartScales: [UUID: SIMD3<Float>] = [:]
         private var heightPanStartY: Float = 0
         private var rotationPanStartOrientation: simd_quatf?
+        private var rotationPanAxis: RotationAxis?
         private var goodsPinchStartScale: SIMD3<Float>?
         private var selectionOutlines: [Entity] = []
         private var outlinedTarget: ARShelfSelectionTarget?
@@ -617,17 +623,24 @@ struct ARShelfRealityView: UIViewRepresentable {
             case .began:
                 viewModel.captureUndoSnapshot(includeImageData: false)
                 rotationPanStartOrientation = targetEntity.orientation
+                rotationPanAxis = nil
             case .changed:
                 guard let startOrientation = rotationPanStartOrientation else {
                     return
                 }
 
                 let translation = gesture.translation(in: gesture.view)
-                let yaw = simd_quatf(angle: Float(translation.x) * 0.01, axis: SIMD3<Float>(0, 1, 0))
-                let pitch = simd_quatf(angle: Float(translation.y) * 0.01, axis: SIMD3<Float>(1, 0, 0))
-                targetEntity.orientation = simd_normalize(yaw * pitch * startOrientation)
+                guard let rotationAxis = resolvedRotationAxis(for: translation) else {
+                    return
+                }
+                targetEntity.orientation = rotatedOrientation(
+                    startOrientation,
+                    translation: translation,
+                    axis: rotationAxis
+                )
             case .ended, .cancelled, .failed:
                 rotationPanStartOrientation = nil
+                rotationPanAxis = nil
                 syncRotationAdjustedTargetToModel()
                 viewModel.requestSave()
             default:
@@ -771,20 +784,27 @@ struct ARShelfRealityView: UIViewRepresentable {
             case .began:
                 viewModel.captureUndoSnapshot(includeImageData: false)
                 shelfGroupRotationStartOrientations = currentShelfLocalOrientations()
+                rotationPanAxis = nil
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
-                let yaw = simd_quatf(angle: Float(translation.x) * 0.01, axis: SIMD3<Float>(0, 1, 0))
-                let pitch = simd_quatf(angle: Float(translation.y) * 0.01, axis: SIMD3<Float>(1, 0, 0))
+                guard let rotationAxis = resolvedRotationAxis(for: translation) else {
+                    return
+                }
 
                 for (shelfID, startOrientation) in shelfGroupRotationStartOrientations {
                     guard let shelfEntity = shelfEntities[shelfID] else {
                         continue
                     }
 
-                    shelfEntity.orientation = simd_normalize(yaw * pitch * startOrientation)
+                    shelfEntity.orientation = rotatedOrientation(
+                        startOrientation,
+                        translation: translation,
+                        axis: rotationAxis
+                    )
                 }
             case .ended, .cancelled, .failed:
                 shelfGroupRotationStartOrientations.removeAll()
+                rotationPanAxis = nil
                 syncShelfTransformsToModel()
                 viewModel.requestSave()
             default:
@@ -797,20 +817,27 @@ struct ARShelfRealityView: UIViewRepresentable {
             case .began:
                 viewModel.captureUndoSnapshot(includeImageData: false)
                 goodsGroupRotationStartOrientations = currentItemLocalOrientations()
+                rotationPanAxis = nil
             case .changed:
                 let translation = gesture.translation(in: gesture.view)
-                let yaw = simd_quatf(angle: Float(translation.x) * 0.01, axis: SIMD3<Float>(0, 1, 0))
-                let pitch = simd_quatf(angle: Float(translation.y) * 0.01, axis: SIMD3<Float>(1, 0, 0))
+                guard let rotationAxis = resolvedRotationAxis(for: translation) else {
+                    return
+                }
 
                 for (itemID, startOrientation) in goodsGroupRotationStartOrientations {
                     guard let itemEntity = itemEntities[itemID] else {
                         continue
                     }
 
-                    itemEntity.orientation = simd_normalize(yaw * pitch * startOrientation)
+                    itemEntity.orientation = rotatedOrientation(
+                        startOrientation,
+                        translation: translation,
+                        axis: rotationAxis
+                    )
                 }
             case .ended, .cancelled, .failed:
                 goodsGroupRotationStartOrientations.removeAll()
+                rotationPanAxis = nil
                 syncTransformsToModel()
                 viewModel.requestSave()
             default:
@@ -901,18 +928,48 @@ struct ARShelfRealityView: UIViewRepresentable {
 
         private func rotationAdjustmentTargetEntity() -> ModelEntity? {
             if viewModel.mode == .shelfEdit,
-               viewModel.shelfMoveMode == .rotation,
+               viewModel.shelfMoveMode.isRotationMode,
                let selectedShelfID = viewModel.selectedShelfID {
                 return shelfEntities[selectedShelfID]
             }
 
             if viewModel.mode == .goodsEdit,
-               viewModel.goodsMoveMode == .rotation,
+               viewModel.goodsMoveMode.isRotationMode,
                let selectedItemID = viewModel.selectedItemID {
                 return itemEntities[selectedItemID]
             }
 
             return nil
+        }
+
+        private func rotatedOrientation(
+            _ startOrientation: simd_quatf,
+            translation: CGPoint,
+            axis: RotationAxis
+        ) -> simd_quatf {
+            switch axis {
+            case .firstAxis:
+                let yaw = simd_quatf(angle: Float(translation.x) * 0.01, axis: SIMD3<Float>(0, 1, 0))
+                return simd_normalize(yaw * startOrientation)
+            case .secondAxis:
+                let pitch = simd_quatf(angle: -Float(translation.y) * 0.01, axis: SIMD3<Float>(1, 0, 0))
+                return simd_normalize(pitch * startOrientation)
+            }
+        }
+
+        private func resolvedRotationAxis(for translation: CGPoint) -> RotationAxis? {
+            let distance = hypot(translation.x, translation.y)
+            guard distance >= 8 else {
+                return rotationPanAxis
+            }
+
+            if let rotationPanAxis {
+                return rotationPanAxis
+            }
+
+            let axis: RotationAxis = abs(translation.x) >= abs(translation.y) ? .firstAxis : .secondAxis
+            rotationPanAxis = axis
+            return axis
         }
 
         private func syncHeightAdjustedTargetToModel() {
@@ -1216,13 +1273,13 @@ struct ARShelfRealityView: UIViewRepresentable {
                 && viewModel.shelfMoveMode == .horizontalPlane
                 && (isMultipleSelectionActive ? hasSelectedShelfTargets : (isAllShelvesSelected || hasSelectedSpatialShelf))
             let isShelfRotationAdjustment = viewModel.mode == .shelfEdit
-                && viewModel.shelfMoveMode == .rotation
+                && viewModel.shelfMoveMode.isRotationMode
                 && (isMultipleSelectionActive ? hasSelectedShelfTargets : (viewModel.selectedShelfID != nil || isAllShelvesSelected))
             let isGoodsHeightAdjustment = viewModel.mode == .goodsEdit
                 && viewModel.goodsMoveMode == .height
                 && (isMultipleSelectionActive ? hasSelectedItemTargets : viewModel.selectedItemID != nil)
             let isGoodsRotationAdjustment = viewModel.mode == .goodsEdit
-                && viewModel.goodsMoveMode == .rotation
+                && viewModel.goodsMoveMode.isRotationMode
                 && (isMultipleSelectionActive ? hasSelectedItemTargets : viewModel.selectedItemID != nil)
             let isGlobalGoodsPinchEnabled = viewModel.mode == .goodsEdit
                 && viewModel.goodsMoveMode == .horizontalPlane

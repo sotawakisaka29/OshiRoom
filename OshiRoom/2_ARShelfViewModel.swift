@@ -500,8 +500,8 @@ final class ARShelfViewModel {
     }
 
     var isRotationAdjustmentActive: Bool {
-        (mode == .shelfEdit && shelfMoveMode == .rotation)
-            || (mode == .goodsEdit && goodsMoveMode == .rotation)
+        (mode == .shelfEdit && shelfMoveMode.isRotationMode)
+            || (mode == .goodsEdit && goodsMoveMode.isRotationMode)
     }
 
     func toggleHeightAdjustment() {
@@ -582,7 +582,9 @@ final class ARShelfViewModel {
     private func toggleGoodsRotationAdjustment() {
         goodsMoveMode = goodsMoveMode == .rotation ? .horizontalPlane : .rotation
         if isMultipleSelectionActive, selectedItemIDs.isEmpty == false {
-            statusMessage = goodsMoveMode.goodsSelectedMessage
+            statusMessage = goodsMoveMode == .rotation
+                ? "複数のグッズを選択しています。回転を調整できます。"
+                : "複数のグッズを選択しています。移動できます。"
         } else if selectedItemID != nil {
             statusMessage = goodsMoveMode.goodsSelectedMessage
         } else if isMultipleSelectionActive {
@@ -1107,6 +1109,10 @@ enum ShelfMoveMode {
     case height
     case rotation
 
+    var isRotationMode: Bool {
+        self == .rotation
+    }
+
     var selectionPrompt: String {
         switch self {
         case .horizontalPlane:
@@ -1114,7 +1120,7 @@ enum ShelfMoveMode {
         case .height:
             "高さ調整モードです。棚を選択して縦にドラッグすると上下に移動できます。"
         case .rotation:
-            "回転モードです。棚を選択してスワイプすると上下左右に回転できます。"
+            "回転モードです。棚を選択してスワイプすると回転できます。"
         }
     }
 
@@ -1125,7 +1131,7 @@ enum ShelfMoveMode {
         case .height:
             "グッズ高さ調整モードです。グッズを選択して縦にドラッグすると上下に移動できます。"
         case .rotation:
-            "回転モードです。グッズを選択してスワイプすると上下左右に回転できます。"
+            "回転モードです。グッズを選択してスワイプすると回転できます。"
         }
     }
 
@@ -1136,7 +1142,7 @@ enum ShelfMoveMode {
         case .height:
             "高さ調整中です。縦にドラッグすると棚を上下に移動できます。"
         case .rotation:
-            "回転調整中です。スワイプすると棚を上下左右に回転できます。"
+            "回転調整中です。スワイプすると棚を回転できます。"
         }
     }
 
@@ -1147,7 +1153,7 @@ enum ShelfMoveMode {
         case .height:
             "グッズ高さ調整中です。縦にドラッグすると選択中のグッズを上下に移動できます。"
         case .rotation:
-            "回転調整中です。スワイプすると選択中のグッズを上下左右に回転できます。"
+            "回転調整中です。スワイプすると選択中のグッズを回転できます。"
         }
     }
 }

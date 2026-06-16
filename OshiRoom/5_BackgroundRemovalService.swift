@@ -2,16 +2,58 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import UIKit
 import Vision
+import VisionKit
 
-/// Visionを使い、写真から前景だけを取り出した透明PNG風の画像を作ります。
+/// VisionKitのsubject liftingを優先し、必要ならVisionの前景抽出にフォールバックします。
 struct BackgroundRemovalService {
     private let context = CIContext()
+    private let analyzer = ImageAnalyzer()
 
-    func removeBackground(from image: UIImage) async -> UIImage {
+    func removeBackground(from image: UIImage) async -> UIImage? {
         let normalizedImage = image.normalizedForRendering()
 
+        if let liftedSubject = await liftSubjectUsingVisionKit(from: normalizedImage) {
+            return liftedSubject
+        }
+
+        return await removeWithForegroundMask(from: normalizedImage)
+    }
+
+    private func liftSubjectUsingVisionKit(from image: UIImage) async -> UIImage? {
+        guard ImageAnalyzer.isSupported else {
+            return nil
+        }
+
+        do {
+            let configuration = ImageAnalyzer.Configuration([.visualLookUp])
+            let analysis = try await analyzer.analyze(image, configuration: configuration)
+
+            let interaction = ImageAnalysisInteraction()
+            interaction.analysis = analysis
+            interaction.preferredInteractionTypes = [.imageSubject]
+
+            let subjects = await interaction.subjects
+            guard let subject = subjects.max(by: {
+                ($0.bounds.width * $0.bounds.height) < ($1.bounds.width * $1.bounds.height)
+            }) else {
+                return nil
+            }
+
+            let liftedImage = try await subject.image
+
+            guard liftedImage.containsTransparentPixels() else {
+                return nil
+            }
+
+            return liftedImage.normalizedForRendering().croppedToVisibleAlphaBounds()
+        } catch {
+            return nil
+        }
+    }
+
+    private func removeWithForegroundMask(from normalizedImage: UIImage) async -> UIImage? {
         guard let cgImage = normalizedImage.cgImage else {
-            return normalizedImage
+            return nil
         }
 
         do {
@@ -20,7 +62,7 @@ struct BackgroundRemovalService {
             try handler.perform([request])
 
             guard let result = request.results?.first else {
-                return normalizedImage
+                return nil
             }
 
             let maskBuffer = try result.generateScaledMaskForImage(
@@ -28,9 +70,14 @@ struct BackgroundRemovalService {
                 from: handler
             )
 
-            return applyAlphaMask(maskBuffer, to: cgImage, scale: normalizedImage.scale) ?? normalizedImage
+            guard let maskedImage = applyAlphaMask(maskBuffer, to: cgImage, scale: normalizedImage.scale),
+                  maskedImage.containsTransparentPixels() else {
+                return nil
+            }
+
+            return maskedImage.croppedToVisibleAlphaBounds()
         } catch {
-            return normalizedImage
+            return nil
         }
     }
 

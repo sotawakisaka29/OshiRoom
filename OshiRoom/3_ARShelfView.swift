@@ -206,7 +206,7 @@ struct ARShelfView: View {
                     } label: {
                         BottomMenuItem(
                             title: "回転",
-                            symbolName: "rotate.3d",
+                            symbolName: rotationButtonSymbolName,
                             isActive: viewModel.isRotationAdjustmentActive
                         )
                     }
@@ -246,6 +246,10 @@ struct ARShelfView: View {
 
     private var addButtonSymbolName: String {
         activeEditorMode == .shelfEdit ? "plus.square.on.square" : "photo.badge.plus"
+    }
+
+    private var rotationButtonSymbolName: String {
+        "rotate.3d"
     }
 
     private var canDeleteCurrentSelection: Bool {
